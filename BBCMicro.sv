@@ -36,9 +36,12 @@ assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_n
 assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 assign DDRAM_CLK = clk_sys;   // DDR3 holds the tape image (tape_ddr)
  
-wire tape_motor, tape_adc, tape_adc_act, tape_wbusy, tape_play;
+wire tape_motor, tape_adc, tape_adc_act, tape_wbusy, tape_play, tape_info_req;
+wire tape_in_sel, tape_led;
+wire tape_playing, tape_out, tape_out_en, tape_err;
+wire [15:0] core_audio_l, core_audio_r;
 
-assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_motor;
+assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_led;
 assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
 assign LED_POWER = 0;
 assign BUTTONS   = 0;
@@ -89,6 +92,7 @@ video_freak video_freak
 // U (30)- Master default FS
 // J (19)- Rewind tape (trigger)
 // K (20)- Tape input: File / ADC (I/O board audio-in)
+// L (21)- Tape sound: On / Off
 // File index 1 - UEF tape image
 //
 // Mask index : 
@@ -116,6 +120,7 @@ parameter CONF_STR = {
 	"F1,UEF,Load Tape;",
 	"TJ,Rewind Tape;",
 	"OK,Tape Input,File,ADC;",
+	"OL,Tape Sound,On,Off;",
 	"OC,Autostart,No,Yes;",
 	"-;",
 	"O4,Model,B(MOS6502),Master(R65SC12);",
@@ -134,6 +139,7 @@ parameter CONF_STR = {
 	"-;",
 	"R0,Reset;",
 	"JA,Fire;",
+	"I,Compressed UEF: decompress it first (e.g. 7-Zip),Tape image not recognised;",
 	"V,v",`BUILD_DATE
 };
 
@@ -246,6 +252,8 @@ hps_io #(.CONF_STR(CONF_STR),.VDNUM(3),.BLKSZ(2)) hps_io // IES Updated from c24
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(tape_wbusy),
+	.info_req(tape_info_req),
+	.info(8'd1),
 
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
@@ -473,8 +481,8 @@ bbc_micro_core BBCMicro(
 	.m7_video_opt(status[M7_VIDEO_OPT]),
 	.odd_field(odd_field),
 
-	.audio_l(AUDIO_L),
-	.audio_r(AUDIO_R),
+	.audio_l(core_audio_l),
+	.audio_r(core_audio_r),
 
 	.ext_nOE(),
 	.ext_nWE(mem_we_n),
@@ -555,9 +563,9 @@ bbc_micro_core BBCMicro(
 	.ext_tube_di(),
 	.ext_tube_do(),
 
-	.tape_in(status[20] ? tape_adc : tape_play),
-	.tape_out(),
-	.tape_out_en(),
+	.tape_in(tape_in_sel),
+	.tape_out(tape_out),
+	.tape_out_en(tape_out_en),
 	.tape_motor(tape_motor),
 	.tape_carrier(),
 
@@ -577,6 +585,20 @@ ltc2308_tape #(.CLK_RATE(96000000)) ltc2308_tape
 	.adc_data()
 );
 
+assign tape_in_sel = status[20] ? tape_adc : tape_play;
+
+// Tape: LED steady while the motor is on, blinking (~4Hz) while the tape is
+// actually playing, fast blink (~16Hz) after loading a compressed UEF.
+reg [24:0] tape_blink;
+always @(posedge clk_sys) tape_blink <= tape_blink + 1'd1;
+assign tape_led = tape_err     ? tape_blink[22] :
+                tape_playing ? tape_blink[24] :
+                tape_motor;
+
+reg tape_err_d;
+always @(posedge clk_sys) tape_err_d <= tape_err;
+assign tape_info_req = tape_err & ~tape_err_d;
+
 // Tape image: "Load Tape" (file index 1) downloads a UEF into DDR3, and the
 // player streams it to the Serial ULA while the cassette motor is on.
 // Uncompressed UEFs are parsed in the core; gzipped ones need Main_MiSTer to
@@ -585,7 +607,7 @@ wire        tape_dl = ioctl_download && (ioctl_index[5:0] == 6'd1);
 reg  [24:0] tape_len = 0;
 always @(posedge clk_sys) if (tape_dl && ioctl_wr) tape_len <= ioctl_addr + 25'd1;
 
-wire        tape_rd, tape_rvalid, tape_err, tape_playing;
+wire        tape_rd, tape_rvalid;
 wire [24:0] tape_raddr;
 wire  [7:0] tape_rdata;
 
@@ -645,6 +667,17 @@ begin
 end
 
 wire [7:0] audio_sn;
+
+// Tape sound: what the Serial ULA is hearing (and any tones it is saving),
+// mixed in at a modest level while the motor is on.
+reg  [1:0]  tape_snd_s;
+always @(posedge clk_sys) tape_snd_s <= {tape_snd_s[0], (tape_in_sel | (tape_out & tape_out_en))};
+wire        tape_snd_on = ~status[21] & tape_motor;
+wire signed [16:0] tape_snd = !tape_snd_on ? 17'sd0 : tape_snd_s[1] ? 17'sd2048 : -17'sd2048;
+wire signed [16:0] mix_l = $signed({core_audio_l[15], core_audio_l}) + tape_snd;
+wire signed [16:0] mix_r = $signed({core_audio_r[15], core_audio_r}) + tape_snd;
+assign AUDIO_L = (mix_l[16] != mix_l[15]) ? {mix_l[16], {15{~mix_l[16]}}} : mix_l[15:0];
+assign AUDIO_R = (mix_r[16] != mix_r[15]) ? {mix_r[16], {15{~mix_r[16]}}} : mix_r[15:0];
 
 assign AUDIO_MIX = 0;
 assign AUDIO_S = 1;

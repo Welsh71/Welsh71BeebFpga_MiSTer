@@ -14,3 +14,8 @@ set_multicycle_path -to {emu|mixer|*} -hold 1
 # relaxed and keeps its single-cycle check.
 set_multicycle_path -from {emu|BBCMicro|ext_A* emu|BBCMicro|ext_Din*} -to {emu|ram_raddr_r* emu|ram_waddr_r* emu|ram_wdata_r* emu|rom_addr_r*} -setup 2
 set_multicycle_path -from {emu|BBCMicro|ext_A* emu|BBCMicro|ext_Din*} -to {emu|ram_raddr_r* emu|ram_waddr_r* emu|ram_wdata_r* emu|rom_addr_r*} -hold 1
+
+# Tape: single-bit asynchronous signals into two-flop synchronisers
+# (tape signal clk_sys -> gated clk_48 ULA; cassette motor clk_48 -> clk_sys player)
+set_false_path -to [get_keepers {*|serial_ula_inst|sync[0]}]
+set_false_path -to [get_keepers {*|tape_player|motor_s[0]}]
