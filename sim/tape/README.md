@@ -34,3 +34,17 @@ with `tape_player.v` into the Serial ULA and ACIA, and checks every byte:
 
     python3 make_uef_tests.py        # writes img_*.hex / exp_*.hex
     cvc64 tb_uef.v ../../rtl/tape/*.v && ./cvcsim
+
+## Decompressor
+
+`tb_inflate.v` runs `inflate.v` through `tape_ddr.v` on 33 gzip files made by
+`make_gz_tests.py` with Python's zlib (stored, fixed and dynamic Huffman,
+Z_RLE / Z_HUFFMAN_ONLY / Z_FILTERED, gzip header options, matches up to the
+32KB window, 150KB multi-block, empty file, 20 random fuzz files) and compares
+the output byte for byte; a corrupt stream must end in an error, not a hang.
+
+    python3 make_gz_tests.py
+    cvc64 tb_inflate.v ../../rtl/tape/inflate.v ../../rtl/tape/tape_ddr.v && ./cvcsim
+
+tb_uef.v test D plays a gzipped UEF end to end; test F checks a corrupt one
+is refused.

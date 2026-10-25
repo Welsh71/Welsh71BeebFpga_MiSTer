@@ -1,3 +1,7 @@
 img_*.hex
 exp_*.hex
+gz_*.hex
+raw_*.hex
+gz_count.hex
+gz_cases.txt
 cvcsim

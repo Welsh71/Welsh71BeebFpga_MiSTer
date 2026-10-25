@@ -41,7 +41,7 @@ reg  tape_info_req;
 wire tape_in_sel, tape_led;
 wire [1:0] tape_fmt;
 reg  [7:0] tape_info;
-wire tape_playing, tape_out, tape_out_en, tape_err;
+wire tape_playing, tape_out, tape_out_en, tape_err, tape_inflating;
 wire [15:0] core_audio_l, core_audio_r;
 
 assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_led;
@@ -119,12 +119,12 @@ parameter CONF_STR = {
 	"h0S0,VHDIMGMMB;", // Allow .VHD or .MMB files to be loaded (MMFSv1) or .IMG (MMFS v2)
 	"h1S1,SSDDSD;",
 	"h1S2,SSDDSD;",
+	"OC,Autostart,No,Yes;",
 	"-;",
 	"F1,UEF,Load Tape;",
 	"TJ,Rewind Tape;",
 	"OK,Tape Input,File,ADC;",
 	"OL,Tape Sound,On,Off;",
-	"OC,Autostart,No,Yes;",
 	"-;",
 	"O4,Model,B(MOS6502),Master(R65SC12);",
 	"O56,Co-Processor,None,MOS65C02;",
@@ -142,7 +142,7 @@ parameter CONF_STR = {
 	"-;",
 	"R0,Reset;",
 	"JA,Fire;",
-	"I,Compressed UEF - decompress it first (e.g. 7-Zip),No UEF header - playing as raw bitstream,UEF tape ready;",
+	"I,Compressed UEF could not be decompressed,No UEF header - playing as raw bitstream,UEF tape ready;",
 	"V,v",`BUILD_DATE
 };
 
@@ -591,10 +591,12 @@ ltc2308_tape #(.CLK_RATE(96000000)) ltc2308_tape
 assign tape_in_sel = status[20] ? tape_adc : tape_play;
 
 // Tape: LED steady while the motor is on, blinking (~4Hz) while the tape is
-// actually playing, fast blink (~16Hz) after loading a compressed UEF.
+// actually playing, flicker while decompressing, fast blink (~16Hz) if a
+// compressed UEF could not be decompressed.
 reg [24:0] tape_blink;
 always @(posedge clk_sys) tape_blink <= tape_blink + 1'd1;
-assign tape_led = tape_err     ? tape_blink[22] :
+assign tape_led = tape_inflating ? tape_blink[21] :
+                tape_err     ? tape_blink[22] :
                 tape_playing ? tape_blink[24] :
                 tape_motor;
 
@@ -603,7 +605,7 @@ reg [1:0] tape_fmt_d;
 always @(posedge clk_sys) begin
 	tape_fmt_d <= tape_fmt;
 	case (tape_fmt)
-		2'd3: tape_info <= 8'd1;    // compressed
+		2'd3: tape_info <= 8'd1;    // gzip that failed to decompress
 		2'd2: tape_info <= 8'd2;    // no UEF header
 		default: tape_info <= 8'd3; // UEF ready
 	endcase
@@ -613,28 +615,28 @@ end
 
 // Tape image: "Load Tape" (file index 1) downloads a UEF into DDR3, and the
 // player streams it to the Serial ULA while the cassette motor is on.
-// Uncompressed UEFs are parsed in the core; gzipped ones need Main_MiSTer to
-// decompress them (it sends a ready-made bitstream, which is played as is).
+// gzip-compressed UEFs (most of them) are decompressed in DDR3 first.
 wire        tape_dl = ioctl_download && (ioctl_index[5:0] == 6'd1);
-reg  [24:0] tape_len = 0;
-always @(posedge clk_sys) if (tape_dl && ioctl_wr) tape_len <= ioctl_addr + 25'd1;
-
-wire        tape_rd, tape_rvalid;
-wire [24:0] tape_raddr;
+wire        tape_rd, tape_rvalid, tape_inf_err;
+wire [24:0] tape_raddr, tape_size;
 wire  [7:0] tape_rdata;
 
-tape_ddr tape_ddr
+tape_store tape_store
 (
 	.clk(clk_sys),
 	.rst(RESET),
-	.wr(tape_dl & ioctl_wr),
-	.waddr(ioctl_addr),
-	.wdata(ioctl_dout),
-	.wbusy(tape_wbusy),
-	.rd(tape_rd),
-	.raddr(tape_raddr),
-	.rdata(tape_rdata),
-	.rvalid(tape_rvalid),
+	.dl_active(tape_dl),
+	.dl_wr(ioctl_wr),
+	.dl_addr(ioctl_addr),
+	.dl_data(ioctl_dout),
+	.dl_wait(tape_wbusy),
+	.p_rd(tape_rd),
+	.p_addr(tape_raddr),
+	.p_data(tape_rdata),
+	.p_valid(tape_rvalid),
+	.size(tape_size),
+	.inflating(tape_inflating),
+	.inflate_err(tape_inf_err),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 	.DDRAM_ADDR(DDRAM_ADDR),
@@ -652,7 +654,7 @@ tape_player #(.TICK_DIV(4992)) tape_player      // 96MHz / (16MHz/13/64)
 	.rst(RESET),
 	.motor(tape_motor),
 	.rewind(status[19] | tape_dl),
-	.size(tape_dl ? 25'd0 : tape_len),
+	.size(tape_size),
 	.mem_rd(tape_rd),
 	.mem_addr(tape_raddr),
 	.mem_data(tape_rdata),

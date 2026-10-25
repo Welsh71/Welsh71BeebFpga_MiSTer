@@ -6,7 +6,8 @@ img_a.hex  uncompressed UEF, 1200 baud: carrier, &0100 data, &0112 gap,
            bits, unknown chunk (skipped)
 img_b.hex  uncompressed UEF, 300 baud (&0117)
 img_c.hex  Main_MiSTer bitstream (same algorithm as uef_reader.cpp)
-img_d.hex  gzip-compressed UEF (must be refused)
+img_d.hex  gzip-compressed UEF (decompressed in the core)
+img_f.hex  corrupt gzip (must be refused)
 exp_*.hex  bytes the ACIA should receive, in order
 """
 import gzip, struct, os
@@ -99,11 +100,14 @@ bits += [0] * ((-len(bits)) % 8)
 img_c = bytes(sum(bits[i + k] << (7 - k) for k in range(8)) for i in range(0, len(bits), 8))
 exp_c = d6 + b'AA'
 
-# ---------- image D: gzip ----------
+# ---------- image D: gzip (decompressed in the core) ----------
 img_d = gzip.compress(img_b)
 
+# ---------- image F: corrupt gzip (must be refused) ----------
+img_f = bytes([0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3]) + bytes((i * 73 + 5) & 0xFF for i in range(200))
+
 for n, bs in [('img_a.hex', img_a), ('img_b.hex', img_b), ('img_c.hex', img_c),
-              ('img_d.hex', img_d), ('exp_a.hex', exp_a), ('exp_b.hex', exp_b),
+              ('img_d.hex', img_d), ('img_f.hex', img_f), ('exp_a.hex', exp_a), ('exp_b.hex', exp_b),
               ('exp_c.hex', exp_c)]:
     write_hex(n, bs)
 print('sizes: a=%d b=%d c=%d d=%d  expected bytes: a=%d b=%d c=%d'

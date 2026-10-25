@@ -60,26 +60,31 @@ module tb_uef;
     wire [63:0] DDRAM_DIN;
     wire [7:0]  DDRAM_BE;
 
-    tape_ddr tddr (
+    reg         dl_active = 0;
+    wire [24:0] st_size;
+    wire        st_inflating, st_err;
+
+    tape_store #(.STAGE(25'h100000)) tstore (
         .clk(clk), .rst(rst),
-        .wr(dl_wr), .waddr(dl_addr), .wdata(dl_data), .wbusy(dl_wait),
-        .rd(p_rd), .raddr(p_addr), .rdata(p_data), .rvalid(p_valid),
+        .dl_active(dl_active), .dl_wr(dl_wr), .dl_addr(dl_addr), .dl_data(dl_data), .dl_wait(dl_wait),
+        .p_rd(p_rd), .p_addr(p_addr), .p_data(p_data), .p_valid(p_valid),
+        .size(st_size), .inflating(st_inflating), .inflate_err(st_err),
         .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
         .DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD),
         .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE));
 
     tape_player #(.TICK_DIV(TICK_DIV)) player (
-        .clk(clk), .rst(rst), .motor(motor), .rewind(rewind), .size(tape_size),
+        .clk(clk), .rst(rst), .motor(motor), .rewind(rewind | dl_active), .size(st_size),
         .mem_rd(p_rd), .mem_addr(p_addr), .mem_data(p_data), .mem_valid(p_valid),
         .cas_out(cas), .playing(p_playing), .error(p_err), .fmt(p_fmt), .position());
 
     // ---------------- DDR3 model ----------------
     // Random BUSY, 12-30 clk read latency, checks the address window.
-    reg [63:0] ddr [0:65535];
+    reg [63:0] ddr [0:262143];
     integer    dseed = 7;
     reg        busy_r = 0;
     assign DDRAM_BUSY = busy_r;
-    reg [15:0] rd_q_addr;
+    reg [17:0] rd_q_addr;
     integer    rd_lat = -1;
     integer    k;
     reg [63:0] wtmp;
@@ -90,14 +95,14 @@ module tb_uef;
         if (!busy_r) begin
             if (DDRAM_WE) begin
                 if (DDRAM_ADDR[28:25] !== 4'b0011) $display("DDR write outside window %h", DDRAM_ADDR);
-                wtmp = ddr[DDRAM_ADDR[15:0]];
+                wtmp = ddr[DDRAM_ADDR[17:0]];
                 for (k = 0; k < 8; k = k + 1)
                     if (DDRAM_BE[k]) wtmp[k*8 +: 8] = DDRAM_DIN[k*8 +: 8];
-                ddr[DDRAM_ADDR[15:0]] = wtmp;
+                ddr[DDRAM_ADDR[17:0]] = wtmp;
             end
             if (DDRAM_RD) begin
                 if (DDRAM_ADDR[28:25] !== 4'b0011) $display("DDR read outside window %h", DDRAM_ADDR);
-                rd_q_addr <= DDRAM_ADDR[15:0];
+                rd_q_addr <= DDRAM_ADDR[17:0];
                 rd_lat    <= 12 + (($random(dseed) & 15));
             end
         end
@@ -130,6 +135,7 @@ module tb_uef;
     task download;
         integer i;
         begin
+            @(negedge clk); dl_active = 1;
             for (i = 0; i < img_len; i = i + 1) begin
                 @(negedge clk);
                 while (dl_wait) @(negedge clk);
@@ -139,8 +145,10 @@ module tb_uef;
                 @(negedge clk);
             end
             repeat (50) @(negedge clk);
-            tape_size = img_len;
-            rewind = 1; @(negedge clk); rewind = 0;
+            dl_active = 0;
+            @(negedge clk);
+            while (st_inflating) @(negedge clk);
+            repeat (3000) @(negedge clk);
         end
     endtask
 
@@ -276,9 +284,17 @@ module tb_uef;
 
         load_files("img_d.hex", "exp_b.hex");
         reset_all; download;
-        repeat (2000) @(negedge clk);
-        if (p_err === 1'b1 && player.e_busy === 1'b0 && p_fmt === 2'd3) $display("D. gzip UEF refused: PASS");
-        else begin $display("D. gzip UEF refused: FAIL (err=%b)", p_err); nerr_total = nerr_total + 1; end
+        if (p_fmt !== 2'd1 || st_err) begin $display("  gzip: fmt %0d, inflate_err %b", p_fmt, st_err); nerr_total = nerr_total + 1; end
+        play(8'hD6);
+        check("D. gzipped UEF, decompressed in the core");
+
+        load_files("img_f.hex", "exp_b.hex");
+        reset_all; download;
+        if (p_err === 1'b1 && st_err === 1'b1 && p_fmt === 2'd3 && player.e_busy === 1'b0)
+            $display("F. corrupt gzip refused: PASS");
+        else begin
+            $display("F. corrupt gzip refused: FAIL (inflate_err %b, fmt %0d)", st_err, p_fmt); nerr_total = nerr_total + 1;
+        end
 
         motor_gate_test;
 
