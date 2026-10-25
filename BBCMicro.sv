@@ -28,7 +28,7 @@ module emu
 // This option is required when building the ICEDebugger on the DE10 Nano. Otherwise, leave undefined.
 // `define use_small_memory
 
-assign ADC_BUS  = 'Z;
+// ADC_BUS drives the I/O board's audio input for tape loading (ltc2308_tape below)
 assign USER_OUT = '1;
 assign {UART_RTS, UART_DTR} = '1;
 assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
@@ -36,7 +36,9 @@ assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_n
 assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
  
-assign LED_USER  = ioctl_download | (vsd_sel & sd_act);
+wire tape_motor, tape_adc, tape_adc_act;
+
+assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_motor;
 assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
 assign LED_POWER = 0;
 assign BUTTONS   = 0;
@@ -544,7 +546,27 @@ bbc_micro_core BBCMicro(
 	.ext_tube_a(),
 	.ext_tube_di(),
 	.ext_tube_do(),
+
+	.tape_in(tape_adc),
+	.tape_out(),
+	.tape_out_en(),
+	.tape_motor(tape_motor),
+	.tape_carrier(),
+
 	.test()
+);
+
+// Tape input from the I/O board's audio-in (ADC), squared with hysteresis.
+// Play a tape, or a tape-image WAV, into it and type *TAPE / CHAIN"".
+ltc2308_tape #(.CLK_RATE(96000000)) ltc2308_tape
+(
+	.reset(reset),
+	.clk(clk_sys),
+	.ADC_BUS(ADC_BUS),
+	.dout(tape_adc),
+	.active(tape_adc_act),
+	.adc_sync(),
+	.adc_data()
 );
 
 

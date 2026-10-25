@@ -233,6 +233,13 @@ entity bbc_micro_core is
 
 
 
+        -- Cassette (Serial ULA)
+        tape_in        : in    std_logic := '0';  -- squared tape signal
+        tape_out       : out   std_logic;         -- tone output (square)
+        tape_out_en    : out   std_logic;         -- tone output active (ACIA RTS low)
+        tape_motor     : out   std_logic;         -- motor relay
+        tape_carrier   : out   std_logic;         -- demodulator DCD (debug)
+
         -- Test outputs
         test           : out   std_logic_vector(7 downto 0) -- IES New
 
@@ -297,6 +304,60 @@ component fdc1772 is
 	);
 end component ;
 
+component acia6850 is
+    port (
+        clk     : in  std_logic;
+        rst     : in  std_logic;
+        bus_en  : in  std_logic;
+        cs      : in  std_logic;
+        rw      : in  std_logic;
+        rs      : in  std_logic;
+        din     : in  std_logic_vector(7 downto 0);
+        dout    : out std_logic_vector(7 downto 0);
+        irq     : out std_logic;
+        rx_tick : in  std_logic;
+        tx_tick : in  std_logic;
+        rxd     : in  std_logic;
+        dcd     : in  std_logic;
+        cts     : in  std_logic;
+        txd     : out std_logic;
+        rts     : out std_logic
+    );
+end component;
+
+component serial_ula is
+    generic (
+        CLK_HZ   : integer := 48000000;
+        BASE_DIV : integer := 39
+    );
+    port (
+        clk          : in  std_logic;
+        rst          : in  std_logic;
+        bus_en       : in  std_logic;
+        cs           : in  std_logic;
+        rw           : in  std_logic;
+        din          : in  std_logic_vector(7 downto 0);
+        ctrl         : out std_logic_vector(7 downto 0);
+        motor        : out std_logic;
+        acia_rx_tick : out std_logic;
+        acia_tx_tick : out std_logic;
+        acia_rxd     : out std_logic;
+        acia_dcd     : out std_logic;
+        acia_cts     : out std_logic;
+        acia_txd     : in  std_logic;
+        acia_rts     : in  std_logic;
+        cas_in       : in  std_logic;
+        cas_out      : out std_logic;
+        cas_out_en   : out std_logic;
+        rs423_rxd    : in  std_logic;
+        rs423_cts    : in  std_logic;
+        rs423_txd    : out std_logic;
+        rs423_rts    : out std_logic;
+        carrier      : out std_logic
+    );
+end component;
+
+
 
 -------------
 -- Signals
@@ -304,6 +365,18 @@ end component ;
 
 signal reset            :   std_logic;
 signal reset_n          :   std_logic;
+
+-- Cassette: 6850 ACIA and Serial ULA
+signal tape_rst         :   std_logic := '1';
+signal acia_do          :   std_logic_vector(7 downto 0);
+signal acia_irq         :   std_logic;
+signal ula_rx_tick      :   std_logic;
+signal ula_tx_tick      :   std_logic;
+signal acia_rxd         :   std_logic;
+signal acia_dcd         :   std_logic;
+signal acia_cts         :   std_logic;
+signal acia_txd         :   std_logic;
+signal acia_rts         :   std_logic;
 
 -- Clock enables for the scan doubler
 -- signal clken_pixel      :   std_logic;
@@ -1760,13 +1833,76 @@ begin
         end if;
     end process;
 
+    --------------------------------------------------------
+    -- Cassette: MC6850 ACIA (&FE08) and Serial ULA (&FE10)
+    --------------------------------------------------------
+    -- Neither chip has a reset pin on the BBC (MOS master-resets the ACIA),
+    -- so only a hard reset clears them, not BREAK.
+    tape_reset: process(clock_48)
+    begin
+        if rising_edge(clock_48) then
+            tape_rst <= not hard_reset_n;
+        end if;
+    end process;
+
+    acia_inst : acia6850
+    port map (
+        clk     => clock_48,
+        rst     => tape_rst,
+        bus_en  => cpu_clken,
+        cs      => acia_enable,
+        rw      => cpu_r_nw,
+        rs      => cpu_a(0),
+        din     => cpu_do,
+        dout    => acia_do,
+        irq     => acia_irq,
+        rx_tick => ula_rx_tick,
+        tx_tick => ula_tx_tick,
+        rxd     => acia_rxd,
+        dcd     => acia_dcd,
+        cts     => acia_cts,
+        txd     => acia_txd,
+        rts     => acia_rts
+    );
+
+    serial_ula_inst : serial_ula
+    generic map (
+        CLK_HZ   => 48000000,
+        BASE_DIV => 39
+    )
+    port map (
+        clk          => clock_48,
+        rst          => tape_rst,
+        bus_en       => cpu_clken,
+        cs           => serproc_enable,
+        rw           => cpu_r_nw,
+        din          => cpu_do,
+        ctrl         => open,
+        motor        => tape_motor,
+        acia_rx_tick => ula_rx_tick,
+        acia_tx_tick => ula_tx_tick,
+        acia_rxd     => acia_rxd,
+        acia_dcd     => acia_dcd,
+        acia_cts     => acia_cts,
+        acia_txd     => acia_txd,
+        acia_rts     => acia_rts,
+        cas_in       => tape_in,
+        cas_out      => tape_out,
+        cas_out_en   => tape_out_en,
+        rs423_rxd    => '1',
+        rs423_cts    => '0',
+        rs423_txd    => open,
+        rs423_rts    => open,
+        carrier      => tape_carrier
+    );
+
     -- CPU data bus mux and interrupts
     cpu_di <=
 	     cpu_do         when cpu_r_nw = '0' else -- Loopback required by T65 for illegal opcodes
         cpu_mem_data   when ram_enable = '1' or rom_enable = '1' or mos_enable = '1' else
         crtc_do        when crtc_enable = '1' else
         adc_do         when adc_enable = '1' else
-        "00000010"     when acia_enable = '1' else
+        acia_do        when acia_enable = '1' else
         sys_via_do_r   when sys_via_enable = '1' else
         user_via_do_r  when user_via_enable = '1' else
         mouse_via_do_r when mouse_via_enable = '1' else
@@ -1783,8 +1919,8 @@ begin
         "11111111"     when io_fred = '1' or io_jim = '1' else
         (others => '0'); -- un-decoded locations are pulled down by RP1
 
-    cpu_irq_n <= not ((not sys_via_irq_n) or (not user_via_irq_n) or (not mouse_via_irq_n) or acc_irr) when m128_mode = '1' else
-                 not ((not sys_via_irq_n) or (not user_via_irq_n) or (not mouse_via_irq_n));
+    cpu_irq_n <= not ((not sys_via_irq_n) or (not user_via_irq_n) or (not mouse_via_irq_n) or acia_irq or acc_irr) when m128_mode = '1' else
+                 not ((not sys_via_irq_n) or (not user_via_irq_n) or (not mouse_via_irq_n) or acia_irq);
     -- SRAM bus
     ext_nCS <= '0';
 
