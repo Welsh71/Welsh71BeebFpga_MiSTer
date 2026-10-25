@@ -45,6 +45,8 @@ set_global_assignment -name VERILOG_FILE rtl/Tube/tube.v
 set_global_assignment -name VHDL_FILE rtl/Tube/tube_comp_pack.vhd
 set_global_assignment -name VERILOG_FILE rtl/tape/acia6850.v
 set_global_assignment -name VERILOG_FILE rtl/tape/serial_ula.v
+set_global_assignment -name VERILOG_FILE rtl/tape/tape_ddr.v
+set_global_assignment -name VERILOG_FILE rtl/tape/tape_player.v
 set_global_assignment -name VERILOG_FILE rtl/fdc1772/fdc1772.v
 set_global_assignment -name VERILOG_FILE rtl/fdc1772/floppy.v
 set_global_assignment -name VERILOG_FILE rtl/rtc_chip.v

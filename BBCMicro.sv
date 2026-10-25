@@ -34,9 +34,9 @@ assign {UART_RTS, UART_DTR} = '1;
 assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 // assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
-assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
+assign DDRAM_CLK = clk_sys;   // DDR3 holds the tape image (tape_ddr)
  
-wire tape_motor, tape_adc, tape_adc_act;
+wire tape_motor, tape_adc, tape_adc_act, tape_wbusy, tape_play;
 
 assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_motor;
 assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
@@ -87,6 +87,9 @@ video_freak video_freak
 // S (28)- M7 Video opt
 // T (29)- Master shadow video mode on boot
 // U (30)- Master default FS
+// J (19)- Rewind tape (trigger)
+// K (20)- Tape input: File / ADC (I/O board audio-in)
+// File index 1 - UEF tape image
 //
 // Mask index : 
 // 0 - MMFS Active
@@ -109,6 +112,10 @@ parameter CONF_STR = {
 	"h0S0,VHDIMGMMB;", // Allow .VHD or .MMB files to be loaded (MMFSv1) or .IMG (MMFS v2)
 	"h1S1,SSDDSD;",
 	"h1S2,SSDDSD;",
+	"-;",
+	"F1,UEF,Load Tape;",
+	"TJ,Rewind Tape;",
+	"OK,Tape Input,File,ADC;",
 	"OC,Autostart,No,Yes;",
 	"-;",
 	"O4,Model,B(MOS6502),Master(R65SC12);",
@@ -238,6 +245,7 @@ hps_io #(.CONF_STR(CONF_STR),.VDNUM(3),.BLKSZ(2)) hps_io // IES Updated from c24
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(tape_wbusy),
 
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
@@ -547,7 +555,7 @@ bbc_micro_core BBCMicro(
 	.ext_tube_di(),
 	.ext_tube_do(),
 
-	.tape_in(tape_adc),
+	.tape_in(status[20] ? tape_adc : tape_play),
 	.tape_out(),
 	.tape_out_en(),
 	.tape_motor(tape_motor),
@@ -567,6 +575,58 @@ ltc2308_tape #(.CLK_RATE(96000000)) ltc2308_tape
 	.active(tape_adc_act),
 	.adc_sync(),
 	.adc_data()
+);
+
+// Tape image: "Load Tape" (file index 1) downloads a UEF into DDR3, and the
+// player streams it to the Serial ULA while the cassette motor is on.
+// Uncompressed UEFs are parsed in the core; gzipped ones need Main_MiSTer to
+// decompress them (it sends a ready-made bitstream, which is played as is).
+wire        tape_dl = ioctl_download && (ioctl_index[5:0] == 6'd1);
+reg  [24:0] tape_len = 0;
+always @(posedge clk_sys) if (tape_dl && ioctl_wr) tape_len <= ioctl_addr + 25'd1;
+
+wire        tape_rd, tape_rvalid, tape_err, tape_playing;
+wire [24:0] tape_raddr;
+wire  [7:0] tape_rdata;
+
+tape_ddr tape_ddr
+(
+	.clk(clk_sys),
+	.rst(RESET),
+	.wr(tape_dl & ioctl_wr),
+	.waddr(ioctl_addr),
+	.wdata(ioctl_dout),
+	.wbusy(tape_wbusy),
+	.rd(tape_rd),
+	.raddr(tape_raddr),
+	.rdata(tape_rdata),
+	.rvalid(tape_rvalid),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE)
+);
+
+tape_player #(.TICK_DIV(4992)) tape_player      // 96MHz / (16MHz/13/64)
+(
+	.clk(clk_sys),
+	.rst(RESET),
+	.motor(tape_motor),
+	.rewind(status[19] | tape_dl),
+	.size(tape_dl ? 25'd0 : tape_len),
+	.mem_rd(tape_rd),
+	.mem_addr(tape_raddr),
+	.mem_data(tape_rdata),
+	.mem_valid(tape_rvalid),
+	.cas_out(tape_play),
+	.playing(tape_playing),
+	.error(tape_err),
+	.position()
 );
 
 
