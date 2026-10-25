@@ -273,7 +273,9 @@ reg  [7:0] rom_dout;
 reg  [7:0] rom_data;
 
 (* ram_init_file = "roms/rom.mif" *) reg [7:0] rom[16 * 16384];
-always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset) rom[reset ? ioctl_addr[17:0] : rom_addr[17:0]] <= ioctl_dout;
+// ROM is only written while reset is held (ioctl download), so the write port uses ioctl_addr alone.
+// Muxing rom_addr in here tied ext_A to every ROM block's write enable and failed timing.
+always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset) rom[ioctl_addr[17:0]] <= ioctl_dout;
 always @(posedge clk_sys) rom_dout <= rom[rom_addr[17:0]];
 
 
@@ -362,14 +364,27 @@ end
 
 reg [7:0] ram_dout;
 
+// RAM write port registered in clk_sys. ext_A/ext_nWE/ext_Din come from the gated clk_48
+// domain and previously drove the write-enable decode of ~200 M10K blocks combinationally,
+// with the write landing on the first clk_sys edge (single-cycle path, failed at 96MHz).
+// One extra clk_sys of write latency is invisible to the 2MHz CPU and video.
+reg        ram_we_r;
+reg [17:0] ram_waddr_r;
+reg  [7:0] ram_wdata_r;
+always @(posedge clk_sys) begin
+	ram_we_r    <= mem_addr[18] & old_we & ~mem_we_n;
+	ram_waddr_r <= mem_addr[17:0];
+	ram_wdata_r <= mem_din;
+end
+
 // See definition of use_small_memory for explanation
 `ifdef use_small_memory
 	reg [7:0] ram[5 * 16384];
-	always @(posedge clk_sys) if(mem_addr[18] & mem_addr[17] & old_we & ~mem_we_n) ram[mem_addr[16:0]] <= mem_din;
+	always @(posedge clk_sys) if(ram_we_r & ram_waddr_r[17]) ram[ram_waddr_r[16:0]] <= ram_wdata_r;
 	always @(posedge clk_sys) if(mem_addr[17]) ram_dout <= ram[mem_addr[16:0]]; else ram_dout <=0;
 `else
 	reg [7:0] ram[212992];
-	always @(posedge clk_sys) if(mem_addr[18] & old_we & ~mem_we_n) ram[mem_addr[17:0]] <= mem_din;
+	always @(posedge clk_sys) if(ram_we_r) ram[ram_waddr_r] <= ram_wdata_r;
 	always @(posedge clk_sys) ram_dout <= ram[mem_addr[17:0]];
 `endif
 
