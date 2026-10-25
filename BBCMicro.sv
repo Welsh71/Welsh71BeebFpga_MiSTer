@@ -36,8 +36,11 @@ assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_n
 assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 assign DDRAM_CLK = clk_sys;   // DDR3 holds the tape image (tape_ddr)
  
-wire tape_motor, tape_adc, tape_adc_act, tape_wbusy, tape_play, tape_info_req;
+wire tape_motor, tape_adc, tape_adc_act, tape_wbusy, tape_play;
+reg  tape_info_req;
 wire tape_in_sel, tape_led;
+wire [1:0] tape_fmt;
+reg  [7:0] tape_info;
 wire tape_playing, tape_out, tape_out_en, tape_err;
 wire [15:0] core_audio_l, core_audio_r;
 
@@ -139,7 +142,7 @@ parameter CONF_STR = {
 	"-;",
 	"R0,Reset;",
 	"JA,Fire;",
-	"I,Compressed UEF: decompress it first (e.g. 7-Zip),Tape image not recognised;",
+	"I,Compressed UEF - decompress it first (e.g. 7-Zip),No UEF header - playing as raw bitstream,UEF tape ready;",
 	"V,v",`BUILD_DATE
 };
 
@@ -253,7 +256,7 @@ hps_io #(.CONF_STR(CONF_STR),.VDNUM(3),.BLKSZ(2)) hps_io // IES Updated from c24
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(tape_wbusy),
 	.info_req(tape_info_req),
-	.info(8'd1),
+	.info(tape_info),
 
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
@@ -595,9 +598,18 @@ assign tape_led = tape_err     ? tape_blink[22] :
                 tape_playing ? tape_blink[24] :
                 tape_motor;
 
-reg tape_err_d;
-always @(posedge clk_sys) tape_err_d <= tape_err;
-assign tape_info_req = tape_err & ~tape_err_d;
+// Menu message once the player has identified a newly loaded image
+reg [1:0] tape_fmt_d;
+always @(posedge clk_sys) begin
+	tape_fmt_d <= tape_fmt;
+	case (tape_fmt)
+		2'd3: tape_info <= 8'd1;    // compressed
+		2'd2: tape_info <= 8'd2;    // no UEF header
+		default: tape_info <= 8'd3; // UEF ready
+	endcase
+	// one clk after tape_info is valid; hps_io latches info on the rising edge
+	tape_info_req <= (tape_fmt != 2'd0) && (tape_fmt_d != 2'd0);
+end
 
 // Tape image: "Load Tape" (file index 1) downloads a UEF into DDR3, and the
 // player streams it to the Serial ULA while the cassette motor is on.
@@ -648,6 +660,7 @@ tape_player #(.TICK_DIV(4992)) tape_player      // 96MHz / (16MHz/13/64)
 	.cas_out(tape_play),
 	.playing(tape_playing),
 	.error(tape_err),
+	.fmt(tape_fmt),
 	.position()
 );
 

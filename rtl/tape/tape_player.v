@@ -39,6 +39,7 @@ module tape_player #(
     output wire        cas_out,
     output wire        playing,             // motor on and data left
     output wire        error,               // gzip image
+    output reg  [1:0]  fmt,                 // 0 not yet known, 1 UEF, 2 raw bitstream, 3 gzip
     output wire [24:0] position
 );
 
@@ -186,6 +187,7 @@ module tape_player #(
     end
 
     wire bit_cur = cur[3'd7 - bit_i[2:0]];
+    wire ps_next_ch = have && hidx == 4'd11;    // last header byte: it's a UEF
     // &0104 stop bits: signed count, negative means an extra short wave; use the magnitude
     wire [7:0] stop_mag = acc[23] ? (8'd0 - acc[23:16]) : acc[23:16];
 
@@ -195,8 +197,13 @@ module tape_player #(
         if (sym_take) sym_valid <= 1'b0;
 
         if (rst || rewind) begin
-            ps <= P_IDLE; sym_valid <= 1'b0; loops <= 3'd1; hidx <= 4'd0;
-        end else if (!take && !seek) begin       // let the reader update between steps
+            ps <= P_IDLE; sym_valid <= 1'b0; loops <= 3'd1; hidx <= 4'd0; fmt <= 2'd0;
+        end else if (!take && !seek) begin
+            if (ps == P_HDR) begin
+                if (ps_next_ch)  fmt <= 2'd1;
+            end
+            if (ps == P_BS && fmt == 2'd0)  fmt <= 2'd2;
+            if (ps == P_ERR) fmt <= 2'd3;       // let the reader update between steps
             case (ps)
             P_IDLE:
                 if (size != 25'd0) begin

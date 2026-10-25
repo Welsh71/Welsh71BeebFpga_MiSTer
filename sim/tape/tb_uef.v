@@ -47,6 +47,7 @@ module tb_uef;
     reg         rewind = 0;
 
     wire        p_rd, p_valid, p_err, p_playing;
+    wire [1:0]  p_fmt;
     wire [24:0] p_addr;
     wire [7:0]  p_data;
 
@@ -70,7 +71,7 @@ module tb_uef;
     tape_player #(.TICK_DIV(TICK_DIV)) player (
         .clk(clk), .rst(rst), .motor(motor), .rewind(rewind), .size(tape_size),
         .mem_rd(p_rd), .mem_addr(p_addr), .mem_data(p_data), .mem_valid(p_valid),
-        .cas_out(cas), .playing(p_playing), .error(p_err), .position());
+        .cas_out(cas), .playing(p_playing), .error(p_err), .fmt(p_fmt), .position());
 
     // ---------------- DDR3 model ----------------
     // Random BUSY, 12-30 clk read latency, checks the address window.
@@ -256,7 +257,10 @@ module tb_uef;
         $display("UEF player end-to-end tests (DDR3 model, %0d Hz)", CLK_HZ);
 
         load_files("img_a.hex", "exp_a.hex");
-        reset_all; download; play(8'hD5);
+        reset_all; download;
+        repeat (3000) @(negedge clk);
+        if (p_fmt !== 2'd1) begin $display("  fmt after UEF load = %0d, expected 1", p_fmt); nerr_total = nerr_total + 1; end
+        play(8'hD5);
         check("A. UEF 1200 baud, all chunk types");
 
         load_files("img_b.hex", "exp_b.hex");
@@ -264,13 +268,16 @@ module tb_uef;
         check("B. UEF 300 baud (0117)");
 
         load_files("img_c.hex", "exp_c.hex");
-        reset_all; download; play(8'hD5);
+        reset_all; download;
+        repeat (3000) @(negedge clk);
+        if (p_fmt !== 2'd2) begin $display("  fmt after bitstream load = %0d, expected 2", p_fmt); nerr_total = nerr_total + 1; end
+        play(8'hD5);
         check("C. Main_MiSTer bitstream");
 
         load_files("img_d.hex", "exp_b.hex");
         reset_all; download;
         repeat (2000) @(negedge clk);
-        if (p_err === 1'b1 && player.e_busy === 1'b0) $display("D. gzip UEF refused: PASS");
+        if (p_err === 1'b1 && player.e_busy === 1'b0 && p_fmt === 2'd3) $display("D. gzip UEF refused: PASS");
         else begin $display("D. gzip UEF refused: FAIL (err=%b)", p_err); nerr_total = nerr_total + 1; end
 
         motor_gate_test;
