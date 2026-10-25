@@ -276,7 +276,12 @@ reg  [7:0] rom_data;
 // ROM is only written while reset is held (ioctl download), so the write port uses ioctl_addr alone.
 // Muxing rom_addr in here tied ext_A to every ROM block's write enable and failed timing.
 always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset) rom[ioctl_addr[17:0]] <= ioctl_dout;
-always @(posedge clk_sys) rom_dout <= rom[rom_addr[17:0]];
+// Read address registered in clk_sys: ext_A changes on gated clk_48 and fans out to ~250
+// ROM blocks through the rom_addr lookup. A memory slot lasts 12 clk_sys and data is
+// latched at its end, so the extra cycle of read latency is safe.
+reg [17:0] rom_addr_r;
+always @(posedge clk_sys) rom_addr_r <= rom_addr;
+always @(posedge clk_sys) rom_dout <= rom[rom_addr_r];
 
 
 // Beeb ROM Images
@@ -377,15 +382,19 @@ always @(posedge clk_sys) begin
 	ram_wdata_r <= mem_din;
 end
 
+// Read address registered for the same reason as the ROM (see rom_addr_r).
+reg [17:0] ram_raddr_r;
+always @(posedge clk_sys) ram_raddr_r <= mem_addr[17:0];
+
 // See definition of use_small_memory for explanation
 `ifdef use_small_memory
 	reg [7:0] ram[5 * 16384];
 	always @(posedge clk_sys) if(ram_we_r & ram_waddr_r[17]) ram[ram_waddr_r[16:0]] <= ram_wdata_r;
-	always @(posedge clk_sys) if(mem_addr[17]) ram_dout <= ram[mem_addr[16:0]]; else ram_dout <=0;
+	always @(posedge clk_sys) if(ram_raddr_r[17]) ram_dout <= ram[ram_raddr_r[16:0]]; else ram_dout <=0;
 `else
 	reg [7:0] ram[212992];
 	always @(posedge clk_sys) if(ram_we_r) ram[ram_waddr_r] <= ram_wdata_r;
-	always @(posedge clk_sys) ram_dout <= ram[mem_addr[17:0]];
+	always @(posedge clk_sys) ram_dout <= ram[ram_raddr_r];
 `endif
 
 
@@ -596,6 +605,15 @@ wire sdss;
 reg vsd_sel = 0;
 always @(posedge clk_sys) if(img_mounted[0]) vsd_sel <= |img_size;
 
+// User VIA SPI outputs are combinational from the gated clk_48 domain. Register them in
+// clk_sys so sd_card's SCK edge detector sees clean, timed signals (SPI runs ~1MHz).
+reg sdclk_r, sdmosi_r, sdss_r = 1;
+always @(posedge clk_sys) begin
+	sdclk_r  <= sdclk;
+	sdmosi_r <= sdmosi;
+	sdss_r   <= sdss;
+end
+
 wire vsdmiso;
 sd_card #(.WIDE(0)) sd_card // IES Updated from c244
 (
@@ -612,15 +630,15 @@ sd_card #(.WIDE(0)) sd_card // IES Updated from c244
 	
 	.clk_spi(clk_sys),
 	.sdhc(1),
-	.sck(sdclk),
-	.ss(sdss | ~vsd_sel),
-	.mosi(sdmosi),
+	.sck(sdclk_r),
+	.ss(sdss_r | ~vsd_sel),
+	.mosi(sdmosi_r),
 	.miso(vsdmiso)
 );
 
-assign SD_CS   = sdss   |  vsd_sel;
-assign SD_SCK  = sdclk  & ~vsd_sel;
-assign SD_MOSI = sdmosi & ~vsd_sel;
+assign SD_CS   = sdss_r   |  vsd_sel;
+assign SD_SCK  = sdclk_r  & ~vsd_sel;
+assign SD_MOSI = sdmosi_r & ~vsd_sel;
 
 reg sd_act;
 
