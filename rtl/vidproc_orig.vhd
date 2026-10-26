@@ -300,7 +300,12 @@ begin
             GG <= '0';
             BB <= '0';
         elsif rising_edge(CLOCK) then
-            if clken_pixel = '1' then
+            -- MiSTer: the RGB/blanking output stage runs on every 16MHz CLKEN (as in
+            -- sharpie7's vidproc), not on clken_pixel. hoglet's pixel-clocked stage
+            -- (accurate to real hardware) moves the picture by up to a pixel with the
+            -- screen mode; a mid-frame mode change (Elite, Revs) then gives lines of a
+            -- different width, which the MiSTer scaler cannot cope with.
+            if CLKEN = '1' then
                 -- Look up dot value in the palette.  Bits are as follows:
                 -- bit 3 - FLASH
                 -- bit 2 - Not BLUE
@@ -319,7 +324,8 @@ begin
                 GG <= (green_val and delayed_disen) xor cursor_invert;
                 BB <= (blue_val and delayed_disen) xor cursor_invert;
                 hblank_pix <= delayed_hblank;
-
+            end if;
+            if clken_pixel = '1' then
                 -- Delayed cursor for use in teletext mode
                 cursor_invert1 <= cursor_invert;
                 cursor_invert2 <= cursor_invert1;
