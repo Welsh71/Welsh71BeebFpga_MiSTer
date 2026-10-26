@@ -45,6 +45,7 @@ module tb_uef;
     wire        dl_wait;
     reg  [24:0] tape_size = 0;
     reg         rewind = 0;
+    reg         eject = 0;
 
     wire        p_rd, p_valid, p_err, p_playing;
     wire [1:0]  p_fmt;
@@ -65,7 +66,7 @@ module tb_uef;
     wire        st_inflating, st_err;
 
     tape_store #(.STAGE(25'h100000)) tstore (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(rst), .eject(eject),
         .dl_active(dl_active), .dl_wr(dl_wr), .dl_addr(dl_addr), .dl_data(dl_data), .dl_wait(dl_wait),
         .p_rd(p_rd), .p_addr(p_addr), .p_data(p_data), .p_valid(p_valid),
         .size(st_size), .inflating(st_inflating), .inflate_err(st_err),
@@ -74,7 +75,7 @@ module tb_uef;
         .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE));
 
     tape_player #(.TICK_DIV(TICK_DIV)) player (
-        .clk(clk), .rst(rst), .motor(motor), .rewind(rewind | dl_active), .size(st_size),
+        .clk(clk), .rst(rst), .motor(motor), .rewind(rewind | eject | dl_active), .size(st_size),
         .mem_rd(p_rd), .mem_addr(p_addr), .mem_data(p_data), .mem_valid(p_valid),
         .cas_out(cas), .playing(p_playing), .error(p_err), .fmt(p_fmt), .position());
 
@@ -304,6 +305,44 @@ module tb_uef;
         rewind = 1; @(negedge clk); rewind = 0;
         play(8'hD5);
         check("E. Rewind and replay");
+
+        // G. eject: the tape is forgotten and nothing plays; a new load works again
+        eject = 1; repeat (5) @(negedge clk); eject = 0;
+        repeat (100) @(negedge clk);
+        if (st_size != 0 || player.ps != 5'd0) begin
+            $display("G. Eject: FAIL (size %0d, player state %0d)", st_size, player.ps); nerr_total = nerr_total + 1;
+        end else begin
+            ngot = 0;
+            bus_write(1, 0, 8'h85); bus_write(0, 0, 8'h03); bus_write(0, 0, 8'hD5);
+            repeat (200000) begin @(negedge clk); if (irq) service_once; end
+            bus_write(1, 0, 8'h05);
+            if (ngot != 0 || cas !== 1'b0) begin
+                $display("G. Eject: FAIL (%0d bytes after eject)", ngot); nerr_total = nerr_total + 1;
+            end else $display("G. Eject: PASS");
+        end
+        // H. eject while a gzip image is still decompressing: the result is ignored
+        load_files("img_d.hex", "exp_b.hex");
+        reset_all;
+        begin : h
+            integer i;
+            @(negedge clk); dl_active = 1;
+            for (i = 0; i < img_len; i = i + 1) begin
+                @(negedge clk); while (dl_wait) @(negedge clk);
+                dl_wr = 1; dl_addr = i; dl_data = img[i]; @(negedge clk); dl_wr = 0; @(negedge clk);
+            end
+            repeat (50) @(negedge clk); dl_active = 0;
+            while (!st_inflating) @(negedge clk);
+            eject = 1; repeat (5) @(negedge clk); eject = 0;
+            while (st_inflating) @(negedge clk);
+            repeat (3000) @(negedge clk);
+        end
+        if (st_size != 0) begin $display("H. Eject during decompression: FAIL (size %0d)", st_size); nerr_total = nerr_total + 1; end
+        else $display("H. Eject during decompression: PASS");
+        // and a fresh load after an eject plays normally
+        load_files("img_b.hex", "exp_b.hex");
+        download;
+        play(8'hD6);                       // image B is the 300 baud tape (ACIA /64)
+        check("I. Load after eject");
 
         if (nerr_total == 0) $display("ALL TESTS PASSED");
         else                 $display("FAILURES: %0d", nerr_total);

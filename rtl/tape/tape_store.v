@@ -8,13 +8,15 @@
 //    it recognises as gzip and refuses (so the menu can say so).
 //
 // size is 0 while downloading or decompressing, then the playable length;
-// the player starts when it becomes non-zero.
+// the player starts when it becomes non-zero. eject forgets the image (size 0,
+// and a decompression still running is ignored) until the next download.
 
 module tape_store #(
     parameter [24:0] STAGE = 25'h1000000
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        eject,
 
     // download
     input  wire        dl_active,
@@ -49,6 +51,7 @@ module tape_store #(
     reg  [7:0]  b0, b1;
     reg         dl_d;
     reg  [24:0] base;
+    reg         ejected;
     reg         inf_start;
 
     wire        inf_busy, inf_done, inf_err;
@@ -66,11 +69,14 @@ module tape_store #(
         inf_start <= 1'b0;
         dl_d <= dl_active;
         if (rst) begin
-            size <= 25'd0; base <= STAGE; len <= 25'd0; inflate_err <= 1'b0;
+            size <= 25'd0; base <= STAGE; len <= 25'd0; inflate_err <= 1'b0; ejected <= 1'b0;
+        end else if (eject) begin
+            size <= 25'd0; inflate_err <= 1'b0; ejected <= 1'b1;
         end else begin
             if (dl_active) begin
                 size <= 25'd0;
                 inflate_err <= 1'b0;
+                ejected <= 1'b0;
                 if (dl_wr) begin
                     len <= dl_addr + 25'd1;
                     if (dl_addr == 25'd0) b0 <= dl_data;
@@ -84,7 +90,7 @@ module tape_store #(
                     base <= STAGE; size <= len;
                 end
             end
-            if (inf_done) begin
+            if (inf_done && !ejected) begin
                 if (inf_err || inf_len == 25'd0) begin
                     inflate_err <= 1'b1; base <= STAGE; size <= len;
                 end else begin

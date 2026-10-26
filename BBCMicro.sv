@@ -96,6 +96,7 @@ video_freak video_freak
 // J (19)- Rewind tape (trigger)
 // K (20)- Tape input: File / ADC (I/O board audio-in)
 // L-M (21-22)- Tape sound: Low / Medium / Loud / Off
+// N (23)- Eject tape (trigger)
 // File index 1 - UEF tape image
 //
 // Mask index : 
@@ -123,6 +124,7 @@ parameter CONF_STR = {
 	"-;",
 	"F1,UEF,Load Tape;",
 	"TJ,Rewind Tape;",
+	"TN,Eject Tape;",
 	"OK,Tape Input,File,ADC;",
 	"OLM,Tape Sound,Low,Medium,Loud,Off;",
 	"-;",
@@ -142,7 +144,7 @@ parameter CONF_STR = {
 	"-;",
 	"R0,Reset;",
 	"JA,Fire;",
-	"I,Compressed UEF could not be decompressed,No UEF header - playing as raw bitstream,UEF tape ready;",
+	"I,Compressed UEF could not be decompressed,No UEF header - playing as raw bitstream,UEF tape ready,Tape ejected;",
 	"V,timing-",`BUILD_DATE
 };
 
@@ -602,15 +604,23 @@ assign tape_led = tape_inflating ? tape_blink[21] :
 
 // Menu message once the player has identified a newly loaded image
 reg [1:0] tape_fmt_d;
+reg       tape_ej_d;
+reg [3:0] tape_ej_msg;          // "Tape ejected": info set first, request a few clks later
 always @(posedge clk_sys) begin
 	tape_fmt_d <= tape_fmt;
-	case (tape_fmt)
+	tape_ej_d  <= status[23];
+	if (status[23] & ~tape_ej_d) tape_ej_msg <= 4'd15;
+	else if (tape_ej_msg != 4'd0) tape_ej_msg <= tape_ej_msg - 4'd1;
+	if (tape_ej_msg != 4'd0)
+		tape_info <= 8'd4;          // tape ejected
+	else case (tape_fmt)
 		2'd3: tape_info <= 8'd1;    // gzip that failed to decompress
 		2'd2: tape_info <= 8'd2;    // no UEF header
 		default: tape_info <= 8'd3; // UEF ready
 	endcase
 	// one clk after tape_info is valid; hps_io latches info on the rising edge
-	tape_info_req <= (tape_fmt != 2'd0) && (tape_fmt_d != 2'd0);
+	tape_info_req <= ((tape_fmt != 2'd0) && (tape_fmt_d != 2'd0) && (tape_ej_msg == 4'd0)) ||
+	                 ((tape_ej_msg != 4'd0) && (tape_ej_msg < 4'd12));
 end
 
 // Tape image: "Load Tape" (file index 1) downloads a UEF into DDR3, and the
@@ -625,6 +635,7 @@ tape_store tape_store
 (
 	.clk(clk_sys),
 	.rst(RESET),
+	.eject(status[23]),
 	.dl_active(tape_dl),
 	.dl_wr(ioctl_wr),
 	.dl_addr(ioctl_addr),
@@ -653,7 +664,7 @@ tape_player #(.TICK_DIV(4992)) tape_player      // 96MHz / (16MHz/13/64)
 	.clk(clk_sys),
 	.rst(RESET),
 	.motor(tape_motor),
-	.rewind(status[19] | tape_dl),
+	.rewind(status[19] | status[23] | tape_dl),
 	.size(tape_size),
 	.mem_rd(tape_rd),
 	.mem_addr(tape_raddr),
