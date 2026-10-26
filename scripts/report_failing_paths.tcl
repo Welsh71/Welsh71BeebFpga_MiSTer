@@ -3,6 +3,9 @@
 # (or double-click scripts\report_failing_paths.bat). No recompile needed.
 
 project_open BBCMicro -revision BBCMicro
+# Single-threaded: Quartus 17's parallel keeper matching can crash on this design.
+# Set in memory only - project_close below does not write it back to the .qsf.
+set_global_assignment -name NUM_PARALLEL_PROCESSORS 1
 create_timing_netlist -model slow
 read_sdc
 update_timing_netlist
@@ -26,5 +29,5 @@ report_timing -hold -to_clock $clk -npaths 50 -less_than_slack 0 -detail full_pa
 report_exceptions -file $out/exceptions.txt
 
 delete_timing_netlist
-project_close
+project_close -dont_export_assignments
 puts "Done - see output_files/fail_*.txt"
