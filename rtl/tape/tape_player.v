@@ -54,23 +54,38 @@ module tape_player #(
     reg  [7:0]  cur;
     reg         take, seek;
     reg  [24:0] seek_pos;
+    reg         seek_req;           // a seek waiting for an in-flight read to finish
+    reg  [24:0] seek_tgt;
     wire        eof = (pos >= size);
 
     assign position = pos;
 
+    // A seek (chunk skip) is held until any DDR3 read already in flight has
+    // returned; that read's byte is discarded. (Previously a seek arriving
+    // while a read was pending was dropped, and the parser then read chunk
+    // contents as chunk headers - e.g. after a &0000 info chunk.)
     always @(posedge clk) begin
         mem_rd <= 1'b0;
         if (rst || rewind) begin
-            pos <= 25'd0; have <= 1'b0; pend <= 1'b0;
+            pos <= 25'd0; have <= 1'b0; pend <= 1'b0; seek_req <= 1'b0;
         end else begin
             if (mem_valid && pend) begin
-                cur  <= mem_data;
-                have <= 1'b1;
                 pend <= 1'b0;
+                if (!seek && !seek_req) begin
+                    cur  <= mem_data;
+                    have <= 1'b1;
+                end
             end
-            if (seek && !pend) begin
-                pos  <= seek_pos;
-                have <= 1'b0;
+            if (seek) begin
+                seek_req <= 1'b1;
+                seek_tgt <= seek_pos;
+                have     <= 1'b0;
+            end else if (seek_req) begin
+                if (!pend || mem_valid) begin
+                    pos      <= seek_tgt;
+                    have     <= 1'b0;
+                    seek_req <= 1'b0;
+                end
             end else if (take) begin
                 pos  <= pos + 25'd1;
                 have <= 1'b0;
@@ -198,7 +213,7 @@ module tape_player #(
 
         if (rst || rewind) begin
             ps <= P_IDLE; sym_valid <= 1'b0; loops <= 3'd1; hidx <= 4'd0; fmt <= 2'd0;
-        end else if (!take && !seek) begin
+        end else if (!take && !seek && !seek_req) begin
             if (ps == P_HDR) begin
                 if (ps_next_ch)  fmt <= 2'd1;
             end
