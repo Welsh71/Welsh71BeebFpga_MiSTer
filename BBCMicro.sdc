@@ -26,3 +26,7 @@ set_false_path -to [get_keepers {*|tape_player|motor_s[0]}]
 # latching edge. TimeQuest assumes it can and flags hold violations that depend on
 # placement; remove the hold check on exactly these paths (setup is still checked).
 set_false_path -hold -from [get_keepers {emu|*_rtl_*|*}] -to [get_keepers {emu|BBCMicro|vid_mem_data* emu|BBCMicro|cpu_mem_data* emu|BBCMicro|tube_mem_data*}]
+
+# m128 (Model B / Master) only changes while the core is held in reset (reset_req),
+# so it is static whenever the core is running.
+set_false_path -from [get_keepers {emu|m128}]
