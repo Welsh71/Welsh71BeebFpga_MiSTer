@@ -300,7 +300,7 @@ always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset) rom[ioctl_addr[1
 // Read address registered in clk_sys: ext_A changes on gated clk_48 and fans out to ~250
 // ROM blocks through the rom_addr lookup. A memory slot lasts 12 clk_sys and data is
 // latched at its end, so the extra cycle of read latency is safe.
-reg [17:0] rom_addr_r;
+(* maxfan = 24 *) reg [17:0] rom_addr_r;   // drives every ROM block: let Quartus duplicate it
 always @(posedge clk_sys) rom_addr_r <= rom_addr;
 always @(posedge clk_sys) rom_dout <= rom[rom_addr_r];
 
@@ -783,7 +783,7 @@ always @(posedge clk_sys) begin
 	reg old_mosi, old_miso;
 	integer timeout = 0;
 
-	old_mosi <= sdmosi;
+	old_mosi <= sdmosi_r;
 	old_miso <= sdmiso;
 
 	sd_act <= 0;
@@ -792,7 +792,7 @@ always @(posedge clk_sys) begin
 		sd_act <= 1;
 	end
 
-	if((old_mosi ^ sdmosi) || (old_miso ^ sdmiso)) timeout <= 0;
+	if((old_mosi ^ sdmosi_r) || (old_miso ^ sdmiso)) timeout <= 0;
 end
 
 

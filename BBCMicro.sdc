@@ -39,3 +39,7 @@ set_multicycle_path -from [get_keepers {emu|sd_lba*}] -to [get_keepers {emu|hps_
 # VGA_F1 is built from clk_48-domain flags that change once per field.
 set_multicycle_path -to [get_keepers {emu|vga_f1_r}] -setup 2
 set_multicycle_path -to [get_keepers {emu|vga_f1_r}] -hold 1
+
+# Floppy controller status (gated clk_48) read by hps_io: slow-changing, held while read.
+set_multicycle_path -from [get_keepers {emu|BBCMicro|fdc|*}] -to [get_keepers {emu|hps_io|*}] -setup 2
+set_multicycle_path -from [get_keepers {emu|BBCMicro|fdc|*}] -to [get_keepers {emu|hps_io|*}] -hold 1

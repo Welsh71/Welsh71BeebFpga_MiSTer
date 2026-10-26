@@ -1116,7 +1116,7 @@ begin
 
 
     keyb : entity work.misterkeyboard port map (
-        clock_32, 
+        clock_48, -- MiSTer: same domain as the system VIA and mhz1_clken (was clock_32)
 		hard_reset_n, 
 		mhz1_clken,
         mister_key,
