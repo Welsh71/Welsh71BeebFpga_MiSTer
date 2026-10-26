@@ -240,6 +240,9 @@ entity bbc_micro_core is
         tape_motor     : out   std_logic;         -- motor relay
         tape_carrier   : out   std_logic;         -- demodulator DCD (debug)
 
+        -- Floppy drive activity LED (1770 motor on, drive selected)
+        floppy_led     : out   std_logic;
+
         -- Test outputs
         test           : out   std_logic_vector(7 downto 0) -- IES New
 
@@ -299,8 +302,8 @@ component fdc1772 is
 		sd_buff_addr     : in  std_logic_vector( 8 downto 0);
 		sd_dout          : in  std_logic_vector( 7 downto 0);
 		sd_din           : out std_logic_vector( 7 downto 0);
-		sd_dout_strobe   : in  std_logic
---			drive_led		  : out std_logic
+		sd_dout_strobe   : in  std_logic;
+		drive_led        : out std_logic
 	);
 end component ;
 
@@ -2139,7 +2142,8 @@ begin
 		floppy_drive => floppy_drive,
 		floppy_motor => not floppy_motor,
 		floppy_side =>  floppy_side,
-		floppy_reset => floppy_reset
+		floppy_reset => floppy_reset,
+		drive_led => floppy_led
 
 	);
 

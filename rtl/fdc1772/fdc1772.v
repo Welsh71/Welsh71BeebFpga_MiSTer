@@ -55,7 +55,11 @@ module fdc1772 (
 	input      [8:0] sd_buff_addr,
 	input      [7:0] sd_dout,
 	output     [7:0] sd_din,
-	input            sd_dout_strobe
+	input            sd_dout_strobe,
+
+	// MiSTer: drive activity LED. Follows the 1770 MO (motor on) line for the
+	// selected drive, like the LED on a real BBC disc drive.
+	output           drive_led
 );
 
 
@@ -230,6 +234,7 @@ always @(posedge clkcpu) begin
 end
 
 reg drq_set;
+reg drq_kill;
 
 reg cpu_rw_data;
 always @(posedge clkcpu)
@@ -238,7 +243,7 @@ always @(posedge clkcpu)
 wire drq_clr = !floppy_reset || cpu_rw_data;
 
 always @(posedge clkcpu) begin
-	if(drq_clr) drq <= 1'b0;
+	if(drq_clr || drq_kill) drq <= 1'b0;
 	else if(drq_set) drq <= 1'b1;
 end
 
@@ -318,6 +323,7 @@ wire       fd_doubleside  = fdn_doubleside[fdn];
 wire [4:0] fd_spt         = fdn_spt[fdn];
 
 assign floppy_ready = fd_ready && fd_present;
+assign drive_led    = motor_on && fd_any;
 
 // -------------------------------------------------------------------------
 // ----------------------- internal state machines -------------------------
@@ -654,10 +660,31 @@ always @(posedge clkcpu) begin
 						irq_set <= 1'b1; // emit irq when command done
 					end
 
-					// write track TODO: fake
+					// write track (MiSTer): handshake as the datasheet describes,
+					// so *FORM etc. run. The byte level work (first DRQ, wait
+					// for index, one DRQ per byte time, lost data, finish at the
+					// next index) is in the data transfer block below. The
+					// formatted track data is not written to the image: the
+					// image already holds every sector of a standard 10x256
+					// track and the DFS writes a fresh catalogue afterwards.
 					if(cmd[7:4] == 4'b1111) begin
-						busy <= 1'b0;
-						irq_set <= 1'b1; // emit irq when command done
+						if (fd_writeprot) begin
+							// stay busy for ~100us so a poll for busy (DFS &8E9F)
+							// sees the command start before it ends
+							if (!notready_wait) begin
+								delay_cnt <= CLK_EN/10;
+								notready_wait <= 1'b1;
+							end else begin
+								busy <= 1'b0;
+								irq_set <= 1'b1;
+							end
+						end else begin
+							data_transfer_start <= 1'b1;
+							if(data_transfer_done) begin
+								busy <= 1'b0;
+								irq_set <= 1'b1; // emit irq when command done
+							end
+						end
 					end
 
 					// read address
@@ -820,6 +847,13 @@ function [15:0] crc;
 	end
 endfunction
 
+// write track state
+reg        wt_active;
+reg  [1:0] wt_phase;    // 0 = wait for first byte, 1 = wait for index, 2 = writing
+reg  [1:0] wt_timeout;  // byte times allowed for the first byte
+reg        wt_indexD;
+wire       wt_cpu_wr = cpu_we && cpu_addr == FDC_REG_DATA;
+
 always @(posedge clkcpu) begin
 	reg        data_transfer_startD;
 	reg [10:0] data_transfer_cnt;
@@ -843,6 +877,8 @@ always @(posedge clkcpu) begin
 	end
 
 	drq_set <= 1'b0;
+	drq_kill <= 1'b0;
+	wt_indexD <= fd_index;
 	if (clk8m_en) data_transfer_done <= 0;
 	data_transfer_startD <= data_transfer_start;
 	// received request to read data
@@ -860,7 +896,52 @@ always @(posedge clkcpu) begin
 
 		// write sector asserts drq earlier to fill up the data register in time
 		if(cmd[7:5] == 3'b101) drq_set <= !data_in_valid;
+
+		// write track: DRQ for the first byte straight away, which must
+		// arrive within 3 byte times
+		if(cmd[7:4] == 4'b1111) begin
+			wt_active  <= 1'b1;
+			wt_phase   <= 2'd0;
+			wt_timeout <= 2'd3;
+			data_lost  <= 1'b0;
+			drq_set    <= 1'b1;
+		end
 	end
+
+	if(wt_active) begin
+		if(fd_dclk_en) begin
+			if(wt_phase == 2'd0) begin
+				if(data_in_valid) wt_phase <= 2'd1;
+				else if(wt_timeout == 2'd1) begin
+					// first byte never came: lost data, command ends
+					data_lost <= 1'b1;
+					wt_active <= 1'b0;
+					drq_kill <= 1'b1;
+					data_transfer_done <= 1'b1;
+				end else wt_timeout <= wt_timeout - 2'd1;
+			end
+			if(wt_phase == 2'd2) begin
+				// a byte goes to the disc every byte time; if the CPU did
+				// not supply one the chip writes zero and flags lost data
+				if(!(data_in_valid || wt_cpu_wr)) data_lost <= 1'b1;
+				data_in_valid <= 1'b0;
+				drq_set <= 1'b1;
+			end
+		end
+		// leading edge of the index pulse
+		if(wt_indexD && !fd_index) begin
+			if(wt_phase == 2'd1) begin
+				wt_phase <= 2'd2;
+				data_in_valid <= 1'b0;
+				drq_set <= 1'b1;
+			end else if(wt_phase == 2'd2) begin
+				wt_active <= 1'b0;
+				drq_kill <= 1'b1;
+				data_transfer_done <= 1'b1;
+			end
+		end
+	end
+	if(cmd_rx || !floppy_reset) wt_active <= 1'b0;
 
 	// advance fifo pointer when the write sector data consumed
 	data_in_strobe <= 1'b0;

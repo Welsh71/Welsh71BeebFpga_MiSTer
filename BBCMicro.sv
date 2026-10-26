@@ -45,7 +45,8 @@ wire tape_playing, tape_out, tape_out_en, tape_err, tape_inflating;
 wire [15:0] core_audio_l, core_audio_r;
 
 assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_led;
-assign LED_DISK  = {1'b1,~vsd_sel & sd_act};
+wire   fdd_led;  // 1770 drive LED: lit while the drive motor runs, as on a real BBC drive
+assign LED_DISK  = {1'b1,(~vsd_sel & sd_act) | fdd_led};
 assign LED_POWER = 0;
 assign BUTTONS   = 0;
 assign VGA_SCALER= 0;
@@ -572,6 +573,7 @@ bbc_micro_core BBCMicro(
 	.tape_out(tape_out),
 	.tape_out_en(tape_out_en),
 	.tape_motor(tape_motor),
+	.floppy_led(fdd_led),
 	.tape_carrier(),
 
 	.test()
