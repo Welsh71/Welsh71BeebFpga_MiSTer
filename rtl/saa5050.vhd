@@ -87,10 +87,11 @@ port (
     -- Load output shift register enable - high during active video
     LOSE        :   in  std_logic; -- DE
 
-	 
-	 HBLANK_IN  :   in  std_logic;
-    HBLANK_OUT :   out std_logic;
-	 
+    -- MiSTer (sharpie7): horizontal blanking passed through with the same
+    -- delay as the displayed characters
+    HBLANK_IN   :   in  std_logic;
+    HBLANK_OUT  :   out std_logic;
+
     -- Video out
     R           :   out std_logic;
     G           :   out std_logic;
@@ -102,6 +103,7 @@ end entity;
 architecture rtl of saa5050 is
 
 -- Register inputs in the bus clock domain
+signal di_tmp       :   std_logic_vector(6 downto 0);
 signal di_r         :   std_logic_vector(6 downto 0);
 signal dew_r        :   std_logic;
 signal lose_r       :   std_logic;
@@ -190,16 +192,18 @@ begin
     process(DI_CLOCK,nRESET)
     begin
         if nRESET = '0' then
+            di_tmp <= (others => '0');
             di_r <= (others => '0');
             dew_r <= '0';
             lose_r <= '0';
-				hblank_r <= '1';
+            hblank_r <= '1';
         elsif rising_edge(DI_CLOCK) then
             if DI_CLKEN = '1' then
-                di_r <= DI;
+                di_tmp <= DI;
+                di_r <= di_tmp;
                 dew_r <= DEW;
                 lose_r <= LOSE;
-					 hblank_r <= HBLANK_IN;
+                hblank_r <= HBLANK_IN;
             end if;
         end if;
     end process;
@@ -218,11 +222,11 @@ begin
         elsif rising_edge(CLOCK) then
             if CLKEN = '1' then
                 code <= di_r;
-					 hbld <= hbld(1 downto 0) & hbld(0);
+                hbld <= hbld(1 downto 0) & hbld(0);
                 if pixel_counter = 0 then
                     code_r        <= code;
                     disp_enable_r <= disp_enable;
-						  hbld          <= hbld(1 downto 0) & hbl;
+                    hbld          <= hbld(1 downto 0) & hbl;
                     fg_r          <= fg;
                     bg_r          <= bg;
                     conceal_r     <= conceal;
@@ -250,7 +254,7 @@ begin
                 -- Register syncs for edge detection
                 dew_latch <= dew_r;
                 lose_latch <= lose_r;
-					 hbl_latch <= hblank_r;
+                hbl_latch <= hblank_r;
                 disp_enable_latch <= disp_enable;
 
                 -- When first entering double-height mode start on top row
@@ -262,8 +266,9 @@ begin
                 if pixel_counter = 11 then
                     -- Start of next character and delayed display enable
                     pixel_counter <= (others => '0');
-                    disp_enable <= lose_latch;
-						  hbl2 <= hbl_latch;
+                    disp_enable <= lose_r;
+                    -- MiSTer: blanking follows disp_enable (now taken from lose_r)
+                    hbl2 <= hblank_r;
                     hbl <= hbl2;
                 else
                     pixel_counter <= pixel_counter + 1;
@@ -273,7 +278,7 @@ begin
                 if lose_r = '1' and lose_latch = '0' then
                     -- Reset pixel counter - small offset to make the output
                     -- line up with the cursor from the video ULA
-                    pixel_counter <= "0010";
+                    pixel_counter <= "0110";
                 end if;
 
                 -- Count frames on end of VSYNC (falling edge of DEW)
@@ -288,7 +293,7 @@ begin
                     double_high2 <= '0';
                 else
                     -- Count lines on end of active video (falling edge of disp_enable)
-                    if disp_enable = '0' and disp_enable_latch = '1' and (VGA = '0' or CRS = '1') then
+                    if disp_enable = '0' and disp_enable_latch = '1' and (VGA = '0' or CRS = '0') then
                         if line_counter = 9 then
                             line_counter <= (others => '0');
 
@@ -368,11 +373,45 @@ begin
                     is_flash_next    <= '0';
                     double_high_next <= '0';
                     unconceal_next   <= '0';
-                    -- Latch the last graphic character (inc seperation), to support graphics hold
                     if code(5) = '1' then
+                        -- Latch the last graphic character (inc seperation), to support graphics hold
                         last_gfx <= code;
                         last_gfx_sep <= gfx_sep;
+                    elsif code(6 downto 5) = "00" and gfx_hold = '0' and code(4 downto 0) /= "11110" then
+                        -- SAA5050 hold bug: control codes outside of hold clear the held character (apart from 11110=HOLD)
+                        last_gfx <= (others => '0');
                     end if;
+
+                    -- Set After codes (from the previous char) are handled first, because in some
+                    -- cases they can be over-ridden by Set At codes. For example:
+                    -- Flash (Set After) followed by Steady (Set At) => Steady wins
+                    -- Double (Set After) followed by Normal (Set At) => Normal wins
+                    -- Delay the "Set After" control code effect until the next character
+                    if fg_next /= "000" then
+                        fg <= fg_next;
+                    end if;
+                    if gfx_next = '1' then
+                        gfx <= '1';
+                    end if;
+                    if alpha_next = '1' then
+                        gfx <= '0';
+                    end if;
+                    if is_flash_next = '1' then
+                        is_flash <= '1';
+                    end if;
+                    if double_high_next = '1' then
+                        double_high <= '1';
+                    end if;
+                    if gfx_release_next = '1' then
+                        gfx_hold <= '0';
+                    end if;
+
+                    -- Note, conflicts can arise as setting/clearing happen in different cycles
+                    -- e.g. 03 (Alpha Yellow) 18 (Conceal) should leave us in a conceal state
+                    if conceal = '1' and unconceal_next = '1' then
+                        conceal <= '0';
+                    end if;
+
                     -- Latch new control codes at the start of each character
                     if code(6 downto 5) = "00" then
                         if code(3) = '0' then
@@ -402,7 +441,7 @@ begin
                             when "01100" =>
                                 double_high <= '0';
                                 -- Graphics hold character is cleared by a *change* of height
-                                if (double_high = '0') then
+                                if (double_high = '1') then
                                     last_gfx <= (others => '0');
                                 end if;
                             -- DOUBLE HEIGHT - Set After
@@ -442,30 +481,6 @@ begin
                             end case;
                         end if;
                     end if;
-                    -- Delay the "Set After" control code effect until the next character
-                    if fg_next /= "000" then
-                        fg <= fg_next;
-                    end if;
-                    if gfx_next = '1' then
-                        gfx <= '1';
-                    end if;
-                    if alpha_next = '1' then
-                        gfx <= '0';
-                    end if;
-                    if is_flash_next = '1' then
-                        is_flash <= '1';
-                    end if;
-                    if double_high_next = '1' then
-                        double_high <= '1';
-                    end if;
-                    if gfx_release_next = '1' then
-                        gfx_hold <= '0';
-                    end if;
-                    -- Note, conflicts can arise as setting/clearing happen in different cycles
-                    -- e.g. 03 (Alpha Yellow) 18 (Conceal) should leave us in a conceal state
-                    if conceal = '1' and unconceal_next = '1' then
-                        conceal <= '0';
-                    end if;
                 end if;
             end if;
         end if;
@@ -489,7 +504,7 @@ begin
                     gfx & code_r & std_logic_vector(line_addr);
 
     -- reference row for character rounding
-    rom_address2 <= rom_address1 + 1 when ((double_high = '0' and CRS = '1') or (double_high = '1' and line_counter(0) = '1')) else
+    rom_address2 <= rom_address1 + 1 when ((double_high = '0' and CRS = '0') or (double_high = '1' and line_counter(0) = '1')) else
                     rom_address1 - 1;
 
     char_rom : entity work.saa5050_rom_dual_port port map (
@@ -541,7 +556,7 @@ begin
                             a(11) := '0';
                             a(4) := '0';
                             a(5) := '0';
-                            if line_counter = 2 or line_counter = 6 or line_counter = 9 then
+                            if line_addr = 2 or line_addr = 6 or line_addr = 9 then
                                 a := (others => '0');
                             end if;
                         end if;
@@ -570,12 +585,7 @@ begin
     process(CLOCK,nRESET)
     variable pixel : std_logic;
     begin
-
-        if nRESET = '0' then
-            R <= '0';
-            G <= '0';
-            B <= '0';
-        elsif rising_edge(CLOCK) then
+        if rising_edge(CLOCK) then
             if CLKEN = '1' then
                 pixel := shift_reg(11) and not ((flash and is_flash_r) or conceal_r);
 
@@ -595,4 +605,5 @@ begin
             end if;
         end if;
     end process;
+
 end architecture;

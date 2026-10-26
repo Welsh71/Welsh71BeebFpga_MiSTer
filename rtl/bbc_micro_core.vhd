@@ -404,7 +404,6 @@ signal vid_clken        :   std_logic; -- 16 MHz video cycles
 signal ttxt_clken       :   std_logic; -- 12 MHz used by SAA 5050 (24MHz in VGA mode)
 signal mhz6_clken       :   std_logic; -- 6 MHz used by Music 5000
 signal mhz4_clken       :   std_logic; -- Used by 6522
-signal mhz2_clken       :   std_logic; -- Used for latching CPU address for clock stretch
 signal mhz1_clken       :   std_logic; -- 1 MHz bus and associated peripherals, 6522 phase 2
 
 -- Control signals to indicate memory cycles
@@ -517,6 +516,13 @@ signal ttxt_glr         :   std_logic;
 signal ttxt_dew         :   std_logic;
 signal ttxt_crs         :   std_logic;
 signal ttxt_lose        :   std_logic;
+signal ttxt_data        :   std_logic_vector(6 downto 0);
+signal ttxt_vdu         :   std_logic;
+signal ttxt_ic15_clken  :   std_logic; -- IC15 (LS273 in front of the SAA5050), falling edge of 1MHz
+signal ttxt_di_clken    :   std_logic; -- SAA5050 character data, rising edge of 1MHz
+signal ttxt_hbl_ic15    :   std_logic; -- MiSTer: hblank through IC15 with ttxt_lose
+signal crtc_test        :   std_logic_vector(3 downto 0);
+signal vid_hblank_ula   :   std_logic; -- MiSTer: hblank aligned with the Video ULA's RGB
 signal ttxt_r           :   std_logic;
 signal ttxt_g           :   std_logic;
 signal ttxt_b           :   std_logic;
@@ -854,26 +860,28 @@ begin
 
 
     crtc : entity work.mc6845 port map (
-        clock_48,
-        crtc_clken,
-        crtc_clken_adr,
-        hard_reset_n,
-        crtc_enable,
-        cpu_r_nw,
-        cpu_a(0),
-        cpu_do,
-        crtc_do,
-        crtc_vsync,
-        crtc_hsync,
-		  video_vblank,
-        crtc_hblank,
-        crtc_de,
-        crtc_cursor,
-        crtc_lpstb,
-        vga_mode,
-		odd_field,
-        crtc_ma,
-        crtc_ra );
+        CLOCK        => clock_48,
+        CLKEN        => crtc_clken,
+        CLKEN_CPU    => cpu_clken,
+        nRESET       => hard_reset_n,
+        ENABLE       => crtc_enable,
+        R_nW         => cpu_r_nw,
+        RS           => cpu_a(0),
+        DI           => cpu_do,
+        DO           => crtc_do,
+        VSYNC        => crtc_vsync,
+        HSYNC        => crtc_hsync,
+        VBLANK       => video_vblank,
+        HBLANK       => crtc_hblank,
+        DE           => crtc_de,
+        CURSOR       => crtc_cursor,
+        LPSTB        => crtc_lpstb,
+        VGA          => vga_mode,
+        ODD_FIELD_IO => odd_field,
+        MA           => crtc_ma,
+        RA           => crtc_ra,
+        test         => crtc_test
+        );
 
     vidproc_nula: if IncludeVideoNuLA generate
     begin
@@ -904,6 +912,8 @@ begin
                 G               => g_out,
                 B               => b_out
                 );
+        -- MiSTer: NuLA is untested here; keep sharpie7's delayed CRTC blanking
+        vid_hblank_ula <= delayed_crtc_hblank2;
     end generate;
 
     vidproc_orig: if not IncludeVideoNuLA generate
@@ -911,11 +921,13 @@ begin
         videoula_orig : entity work.vidproc_orig
             port map (
                 CLOCK           => clock_48,
+                CPUCLKEN        => cpu_clken,
                 CLKEN           => vid_clken,
                 nRESET          => hard_reset_n,
-				CE_PIX          => crtc_cepix,
+                CE_PIX          => crtc_cepix,
+                HBLANK_IN       => crtc_hblank,
+                HBLANK_OUT      => vid_hblank_ula,
                 CLKEN_CRTC      => crtc_clken,
-                CLKEN_CRTC_ADR  => crtc_clken_adr,
                 CLKEN_COUNT     => clken_counter,
                 TTXT            => ttxt_active,
                 VGA             => vga_mode, -- In
@@ -942,13 +954,13 @@ begin
         hard_reset_n,
         vga_mode, -- In
         clock_48, -- Data input is synchronised from the bus clock domain
-        vid_clken,
-        vid_mem_data(6 downto 0),
+        ttxt_di_clken,
+        ttxt_data,
         ttxt_glr,
         ttxt_dew,
         ttxt_crs,
         ttxt_lose,
-		  crtc_hblank,
+        ttxt_hbl_ic15,
         ttxt_hblank,
         ttxt_r, ttxt_g, ttxt_b, ttxt_y
         );
@@ -1461,7 +1473,7 @@ begin
 
     -- Clock enable generation
 
-    -- Updated system timing, as of 26th Feb 2020
+    -- Updated system timing, as of 27th May 2022 (hoglet67/BeebFpga)
     --
     -- The goal of this change to accomodate much slower external RAM.
     --
@@ -1471,31 +1483,31 @@ begin
     -- The video processor increments clken_counter when vid_clken
     -- is asserted.
     --
-    -- The video processor assertes CRTC_CLKEN_ADR during cycle 3/11
+    -- The video processor assertes CRTC_CLKEN during cycle 0/8
     -- (qualified by vid_clken)
     --
-    -- The mc6845 increments the video address at the start of cycle 4/12
+    -- The mc6845 updates it's outputs in CRTC_CLKEN.
     --
-    -- The video processor assertes CRTC_CLKEN during cycle 15/7
+    -- The CPU is clocked out of phase with the CRTC, during cycle 4/12
     -- (qualified by vid_clken)
     --
     -- The video processor latches read data at the end of cycle 0/8
     -- (qualified by vid_clken)
     --
     --      Memory     Data loaded
-    --  0 - Co Pro     CPU, Video
+    --  0 - Co Pro     Video
     --  1 - Co Pro
     --  2 - CPU        Co Pro
     --  3 - CPU
-    --  4 - Co Pro
+    --  4 - Co Pro     CPU
     --  5 - Co Pro
     --  6 - Video      Co Pro
     --  7 - Video
-    --  8 - Co Pro     CPU, Video
+    --  8 - Co Pro     Video
     --  9 - Co Pro
     -- 10 - CPU        Co Pro
     -- 11 - CPU
-    -- 12 - Co Pro
+    -- 12 - Co Pro     CPU
     -- 13 - Co Pro
     -- 14 - Video      Co Pro
     -- 15 - Video
@@ -1521,6 +1533,37 @@ begin
                 vid_clken <= '0';
             end if;
 
+            -- 1MHz/2MHz clock enable (for IC15).
+            --
+            -- On a real Beeb this is clocked on the falling edge of
+            -- the Video ULA 1MHz clock.
+            --
+            -- In VGA mode this needs to be double-speed.
+            if div3_counter = 1 and
+                ((vga_mode = '0' and clken_counter = 0) or
+                 (vga_mode = '1' and clken_counter(2 downto 0) = 0)) then
+                ttxt_ic15_clken <= '1';
+            else
+                ttxt_ic15_clken <= '0';
+            end if;
+
+            -- 1MHz/2MHz clock enable (for the SAA5050)
+            --
+            -- On a real Beeb this is clocked on the rising edge of
+            -- the Video ULA 1MHz clock.
+            --
+            -- In VGA mode this needs to be double-speed.
+            --
+            -- This is the best place to fine-tune the teletext character alignent with the cursor
+            if div3_counter = 1 and
+                ((vga_mode = '0' and clken_counter = 8) or
+                 (vga_mode = '1' and clken_counter(2 downto 0) = 6 and not IncludeVideoNuLA) or
+                 (vga_mode = '1' and clken_counter(2 downto 0) = 3 and     IncludeVideoNuLA)) then
+                ttxt_di_clken <= '1';
+            else
+                ttxt_di_clken <= '0';
+            end if;
+
             -- 12MHz clock enable (for SAA5050)
             if (vga_mode = '0' and div8_counter(1 downto 0) = 3) or (vga_mode = '1' and div8_counter(0) = '1') then
                 ttxt_clken <= '1';
@@ -1543,12 +1586,13 @@ begin
             end if;
 
             -- 2MHz clock enable
-            if div3_counter = 1 and clken_counter(2 downto 0) = 7 then
-                mhz2_clken <= '1';
+            -- (the CPU is clocked out of phase with the CRTC, in cycle 4/12,
+            --  as on a Master: hoglet67/BeebFpga, May 2022)
+            if div3_counter = 1 and clken_counter(2 downto 0) = 3 then
                 -- Compute cycle stretching
                 if mhz1_enable = '1' and cpu_cycle_mask = "00" then
                     -- Block CPU cycles until 1 MHz cycle has completed
-                    if clken_counter(3) = '0' then
+                    if clken_counter(3) = '1' then
                         cpu_cycle_mask <= "01";
                     else
                         cpu_cycle_mask <= "10";
@@ -1557,19 +1601,17 @@ begin
                 if cpu_cycle_mask /= "00" then
                     cpu_cycle_mask <= cpu_cycle_mask - 1;
                 end if;
-            else
-                mhz2_clken <= '0';
             end if;
 
             -- 1MHz clock enable
-            if div3_counter = 1 and clken_counter(3 downto 0) = 15 then
+            if div3_counter = 1 and clken_counter(3 downto 0) = 3 then
                 mhz1_clken <= '1';
             else
                 mhz1_clken <= '0';
             end if;
 
             -- CPU clock enable (taking account of cycle stretching)
-            if div3_counter = 2 and clken_counter(2 downto 0) = 7 and cpu_cycle_mask = "00" then
+            if div3_counter = 2 and clken_counter(2 downto 0) = 3 and cpu_cycle_mask = "00" then
                 cpu_clken <= '1';
             else
                 cpu_clken <= '0';
@@ -2187,12 +2229,15 @@ begin
             end case;
         end if;
 
-        if crtc_ma(13) = '0' then
+        if ttxt_vdu = '0' then
             -- HI RES
             display_a <= std_logic_vector(aa(3 downto 0)) & crtc_ma(7 downto 0) & crtc_ra(2 downto 0);
-        else
-            -- TTX VDU
+        elsif m128_mode = '0' then
+            -- TTX VDU (Model B, &3C00 or &7C00)
             display_a <= std_logic(aa(3)) & "1111" & crtc_ma(9 downto 0);
+        else
+            -- TTX VDU (Master, &7C00 only)
+            display_a <= "11111" & crtc_ma(9 downto 0);
         end if;
     end process;
 
@@ -2207,7 +2252,27 @@ begin
     ttxt_glr <= crtc_hsync_n;
     ttxt_dew <= crtc_vsync;
     ttxt_crs <= not crtc_ra(0);
-    ttxt_lose <= crtc_de;
+
+    ttxt_vdu <= crtc_ma(13);
+
+    -- IC15 (LS273 latch in front of SAA5050), clocked on the falling edge of
+    -- the Video ULA's 1MHz clock (hoglet67/BeebFpga, May 2022)
+    process(clock_48)
+    begin
+        if rising_edge(clock_48) then
+            if ttxt_vdu = '0' then
+                ttxt_data <= (others => '0');
+                ttxt_lose <= '0';
+            elsif ttxt_ic15_clken = '1' then
+                ttxt_data <= vid_mem_data(6 downto 0);
+                ttxt_lose <= crtc_de;
+            end if;
+            -- MiSTer: keep the blanking aligned with LOSE
+            if ttxt_ic15_clken = '1' then
+                ttxt_hbl_ic15 <= crtc_hblank;
+            end if;
+        end if;
+    end process;
 
     -- Connections to System VIA
     -- ADC
@@ -2485,7 +2550,8 @@ begin
     video_blue  <= (others => b_out(0));
     video_cepix <= crtc_cepix when ttxt_active = '0' else ttxt_clken;
     video_sel   <= not ttxt_active;
-	video_hblank<= delayed_crtc_hblank2 when ttxt_active = '0' else ttxt_hblank;
+	-- MiSTer: blanking now comes out of the Video ULA aligned with its RGB
+	video_hblank<= vid_hblank_ula when ttxt_active = '0' else ttxt_hblank;
 	vga_mode <= ttxt_active when m7_video_opt = '0' else '0';
 	
 	-- Pass delayed crtc_hblank to external EMU module to prevent last pixel on line being cut off
