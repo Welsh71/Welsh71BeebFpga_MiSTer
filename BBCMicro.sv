@@ -95,7 +95,7 @@ video_freak video_freak
 // U (30)- Master default FS
 // J (19)- Rewind tape (trigger)
 // K (20)- Tape input: File / ADC (I/O board audio-in)
-// L (21)- Tape sound: On / Off
+// L-M (21-22)- Tape sound: Low / Medium / Loud / Off
 // File index 1 - UEF tape image
 //
 // Mask index : 
@@ -124,7 +124,7 @@ parameter CONF_STR = {
 	"F1,UEF,Load Tape;",
 	"TJ,Rewind Tape;",
 	"OK,Tape Input,File,ADC;",
-	"OL,Tape Sound,On,Off;",
+	"OLM,Tape Sound,Low,Medium,Loud,Off;",
 	"-;",
 	"O4,Model,B(MOS6502),Master(R65SC12);",
 	"O56,Co-Processor,None,MOS65C02;",
@@ -687,8 +687,11 @@ wire [7:0] audio_sn;
 // mixed in at a modest level while the motor is on.
 reg  [1:0]  tape_snd_s;
 always @(posedge clk_sys) tape_snd_s <= {tape_snd_s[0], (tape_in_sel | (tape_out & tape_out_en))};
-wire        tape_snd_on = ~status[21] & tape_motor;
-wire signed [16:0] tape_snd = !tape_snd_on ? 17'sd0 : tape_snd_s[1] ? 17'sd2048 : -17'sd2048;
+wire        tape_snd_on = (status[22:21] != 2'd3) & tape_motor;
+wire signed [16:0] tape_amp = (status[22:21] == 2'd0) ? 17'sd1024 :     // Low
+                              (status[22:21] == 2'd1) ? 17'sd2048 :     // Medium
+                                                        17'sd6144;      // Loud
+wire signed [16:0] tape_snd = !tape_snd_on ? 17'sd0 : tape_snd_s[1] ? tape_amp : -tape_amp;
 wire signed [16:0] mix_l = $signed({core_audio_l[15], core_audio_l}) + tape_snd;
 wire signed [16:0] mix_r = $signed({core_audio_r[15], core_audio_r}) + tape_snd;
 assign AUDIO_L = (mix_l[16] != mix_l[15]) ? {mix_l[16], {15{~mix_l[16]}}} : mix_l[15:0];
