@@ -43,3 +43,8 @@ set_multicycle_path -to [get_keepers {emu|vga_f1_r}] -hold 1
 # Floppy controller status (gated clk_48) read by hps_io: slow-changing, held while read.
 set_multicycle_path -from [get_keepers {emu|BBCMicro|fdc|*}] -to [get_keepers {emu|hps_io|*}] -setup 2
 set_multicycle_path -from [get_keepers {emu|BBCMicro|fdc|*}] -to [get_keepers {emu|hps_io|*}] -hold 1
+
+# MMFS SPI lines: the user VIA port B (gated clk_48) only changes once per 1MHz
+# CPU cycle, then is re-registered into clk_sys (sdclk_r/sdmosi_r/sdss_r).
+set_multicycle_path -to [get_keepers {emu|sdclk_r emu|sdmosi_r emu|sdss_r}] -setup 2
+set_multicycle_path -to [get_keepers {emu|sdclk_r emu|sdmosi_r emu|sdss_r}] -hold 1
