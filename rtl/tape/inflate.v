@@ -129,7 +129,7 @@ module inflate (
         S_DEC     = 6'd27, S_DEC_SYM = 6'd28,
         S_B_CNT   = 6'd29, S_B_OFF   = 6'd30, S_B_SYM   = 6'd31, S_B_CLR   = 6'd32,
         S_AFTER_C = 6'd33, S_AFTER_L = 6'd34, S_AFTER_D = 6'd35, S_FIX_D   = 6'd36,
-        S_ST_COPY2 = 6'd37;
+        S_ST_COPY2 = 6'd37, S_COPY0   = 6'd38;
 
     reg  [5:0]  st, ret, dret, bret, oret;
 
@@ -215,8 +215,13 @@ module inflate (
 
     wire [15:0] ncode   = code | {15'd0, bb[0]};
     wire [15:0] cdiff   = ncode - first;
-    wire [24:0] wsrc    = opos - {9'd0, mdist};
-    wire        need_flush = (cur_be != 8'd0) && (opos[24:3] != cur_wa);
+    // Copy source and "flush the output word" are registered so the 25-bit
+    // output position never feeds the state machine directly (timing at 96MHz).
+    reg  [24:0] wsrc;          // opos - mdist, set in S_COPY0
+    reg         copy_bad;      // distance reaches before the start of the output
+    reg         need_flush;    // cur_w belongs to another word than opos
+    always @(posedge clk)
+        need_flush <= (cur_be != 8'd0) && (opos[24:3] != cur_wa);
 
     // bits consumed this clk (applied at the end of the always block)
     reg  [5:0]  cons;
@@ -514,11 +519,16 @@ module inflate (
                     cons = {2'd0, dist_extra(dsym[4:0])};
                     mdist <= {1'b0, dist_base(dsym[4:0])} +
                              (bb[15:0] & ((16'd1 << dist_extra(dsym[4:0])) - 16'd1));
-                    st <= S_COPY;
+                    st <= S_COPY0;
                 end
             end
+            S_COPY0: begin                  // register the copy source and range check
+                wsrc     <= opos - {9'd0, mdist};
+                copy_bad <= (mdist == 16'd0) || ({9'd0, mdist} > opos);
+                st <= S_COPY;
+            end
             S_COPY:
-                if (mdist == 16'd0 || {9'd0, mdist} > opos)
+                if (copy_bad)
                     st <= S_ERR;                              // reaches before the start
                 else if (mlen == 9'd0)
                     st <= S_SYM;
@@ -527,13 +537,13 @@ module inflate (
             S_WIN:                          // fetch one byte from the window
                 if (wsrc[24:3] == cur_wa && cur_be[wsrc[2:0]]) begin
                     ob <= cur_w[wsrc[2:0]*8 +: 8];
-                    mlen <= mlen - 9'd1; oret <= S_COPY; st <= S_OUT;
+                    mlen <= mlen - 9'd1; oret <= S_COPY0; st <= S_OUT;
                 end else if (prev_ok && wsrc[24:3] == prev_wa) begin
                     ob <= prev_w[wsrc[2:0]*8 +: 8];
-                    mlen <= mlen - 9'd1; oret <= S_COPY; st <= S_OUT;
+                    mlen <= mlen - 9'd1; oret <= S_COPY0; st <= S_OUT;
                 end else if (win_valid) begin
                     ob <= win_data;
-                    mlen <= mlen - 9'd1; oret <= S_COPY; st <= S_OUT;
+                    mlen <= mlen - 9'd1; oret <= S_COPY0; st <= S_OUT;
                 end else if (!win_rd && !wait_win) begin
                     win_rd <= 1'b1; win_addr <= wsrc;
                 end
