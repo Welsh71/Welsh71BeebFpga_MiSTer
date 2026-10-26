@@ -30,3 +30,12 @@ set_false_path -hold -from [get_keepers {emu|*_rtl_*|*}] -to [get_keepers {emu|B
 # m128 (Model B / Master) only changes while the core is held in reset (reset_req),
 # so it is static whenever the core is running.
 set_false_path -from [get_keepers {emu|m128}]
+
+# Floppy LBA (set in the gated clk_48 domain) is stable long before the HPS reads it
+# through hps_io, and stays put until the transfer is acknowledged.
+set_multicycle_path -from [get_keepers {emu|sd_lba*}] -to [get_keepers {emu|hps_io|*}] -setup 2
+set_multicycle_path -from [get_keepers {emu|sd_lba*}] -to [get_keepers {emu|hps_io|*}] -hold 1
+
+# VGA_F1 is built from clk_48-domain flags that change once per field.
+set_multicycle_path -to [get_keepers {emu|vga_f1_r}] -setup 2
+set_multicycle_path -to [get_keepers {emu|vga_f1_r}] -hold 1
