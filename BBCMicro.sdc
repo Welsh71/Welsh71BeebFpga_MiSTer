@@ -48,3 +48,7 @@ set_multicycle_path -from [get_keepers {emu|BBCMicro|fdc|*}] -to [get_keepers {e
 # CPU cycle, then is re-registered into clk_sys (sdclk_r/sdmosi_r/sdss_r).
 set_multicycle_path -to [get_keepers {emu|sdclk_r emu|sdmosi_r emu|sdss_r}] -setup 2
 set_multicycle_path -to [get_keepers {emu|sdclk_r emu|sdmosi_r emu|sdss_r}] -hold 1
+
+# On-screen disk status: floppy state (gated clk_48) is latched once per frame,
+# display only.
+set_false_path -to [get_keepers {emu|disk_osd|inf[*] emu|disk_osd|led}]

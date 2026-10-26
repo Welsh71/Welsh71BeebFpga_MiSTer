@@ -46,6 +46,7 @@ wire [15:0] core_audio_l, core_audio_r;
 
 assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_led;
 wire   fdd_led;  // 1770 drive LED: lit while the drive motor runs, as on a real BBC drive
+wire [23:0] fdd_info; // 1770 state for the on-screen disk status
 assign LED_DISK  = {1'b1,(~vsd_sel & sd_act) | fdd_led};
 assign LED_POWER = 0;
 assign BUTTONS   = 0;
@@ -98,6 +99,7 @@ video_freak video_freak
 // K (20)- Tape input: File / ADC (I/O board audio-in)
 // L-M (21-22)- Tape sound: Low / Medium / Loud / Off
 // N (23)- Eject tape (trigger)
+// o0-o1 (32-33) - On-screen disk status: Off / On / On activity
 // File index 1 - UEF tape image
 //
 // Mask index : 
@@ -122,6 +124,7 @@ parameter CONF_STR = {
 	"h1S1,SSDDSD;",
 	"h1S2,SSDDSD;",
 	"OC,Autostart,No,Yes;",
+	"o01,Disk Status,Off,On,On Activity;",
 	"-;",
 	"F1,UEF,Load Tape;",
 	"TJ,Rewind Tape;",
@@ -574,6 +577,7 @@ bbc_micro_core BBCMicro(
 	.tape_out_en(tape_out_en),
 	.tape_motor(tape_motor),
 	.floppy_led(fdd_led),
+	.floppy_info(fdd_info),
 	.tape_carrier(),
 
 	.test()
@@ -718,6 +722,20 @@ wire [1:0] scale = status[3:2];
 
 wire HSync, VSync, HBlank, VBlank, clk_sel, odd_field;
 wire [3:0] red_vid,green_vid,blue_vid;
+wire [3:0] red_osd,green_osd,blue_osd;
+
+// On-screen floppy status (track/sector), bottom right of the picture
+disk_osd disk_osd
+(
+	.clk(clk_sys),
+	.ce_pix(ce_pix),
+	.hblank(HBlank),
+	.vblank(VBlank),
+	.mode(status[33:32]),
+	.info(fdd_info),
+	.r_in(red_vid), .g_in(green_vid), .b_in(blue_vid),
+	.r_out(red_osd), .g_out(green_osd), .b_out(blue_osd)
+);
 
 assign CLK_VIDEO = clk_sys;
 video_mixer #(640, 1, 1) mixer
@@ -731,9 +749,9 @@ video_mixer #(640, 1, 1) mixer
 	.hq2x(scale == 1),
 	.scandoubler(scale || forced_scandoubler),
 
-	.R(red_vid),
-	.G(green_vid),
-	.B(blue_vid)
+	.R(red_osd),
+	.G(green_osd),
+	.B(blue_osd)
 );
 // Testing shows that best results for the HDMI output are:
 // Mode 0 - 6: Always set VGA_F1 to 0 even when interlaced - therefore and with ~clk_sel

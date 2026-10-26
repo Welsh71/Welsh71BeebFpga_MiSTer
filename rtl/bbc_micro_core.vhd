@@ -242,6 +242,7 @@ entity bbc_micro_core is
 
         -- Floppy drive activity LED (1770 motor on, drive selected)
         floppy_led     : out   std_logic;
+        floppy_info    : out   std_logic_vector(23 downto 0);  -- for the on-screen disk status
 
         -- Test outputs
         test           : out   std_logic_vector(7 downto 0) -- IES New
@@ -303,7 +304,8 @@ component fdc1772 is
 		sd_dout          : in  std_logic_vector( 7 downto 0);
 		sd_din           : out std_logic_vector( 7 downto 0);
 		sd_dout_strobe   : in  std_logic;
-		drive_led        : out std_logic
+		drive_led        : out std_logic;
+		disk_info        : out std_logic_vector(23 downto 0)
 	);
 end component ;
 
@@ -2143,7 +2145,8 @@ begin
 		floppy_motor => not floppy_motor,
 		floppy_side =>  floppy_side,
 		floppy_reset => floppy_reset,
-		drive_led => floppy_led
+		drive_led => floppy_led,
+		disk_info => floppy_info
 
 	);
 

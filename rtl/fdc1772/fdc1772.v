@@ -59,7 +59,11 @@ module fdc1772 (
 
 	// MiSTer: drive activity LED. Follows the 1770 MO (motor on) line for the
 	// selected drive, like the LED on a real BBC disc drive.
-	output           drive_led
+	output           drive_led,
+	// MiSTer: state for the on-screen disk status (disk_osd.v)
+	// [7:0] sector reg, [14:8] head track, [18:15] cmd[7:4], [19] floppy_side,
+	// [20] drive 1, [21] busy, [22] drive LED, [23] a drive is selected
+	output    [23:0] disk_info
 );
 
 
@@ -324,6 +328,7 @@ wire [4:0] fd_spt         = fdn_spt[fdn];
 
 assign floppy_ready = fd_ready && fd_present;
 assign drive_led    = motor_on && fd_any;
+assign disk_info    = { fd_any, drive_led, busy, fdn[0], floppy_side, cmd[7:4], fd_track, sector };
 
 // -------------------------------------------------------------------------
 // ----------------------- internal state machines -------------------------
