@@ -187,14 +187,13 @@ module inflate (
     // ------------------------------------------------------------------
     // Combinational helpers
     // ------------------------------------------------------------------
+    // Table-build length read, pipelined for timing: lidx tracks
+    // (T_D ? hlit : 0) + bi as a register, and the read is registered
+    // into len_at, so it is valid one clk after bi/lidx change.
+    reg  [8:0]  lidx;
     reg  [3:0]  len_at;
-    always @(*) begin
-        case (tsel)
-            T_C:     len_at = clens[bi[4:0]];
-            T_D:     len_at = lens[hlit + bi];
-            default: len_at = lens[bi];
-        endcase
-    end
+    always @(posedge clk)
+        len_at <= (tsel == T_C) ? clens[lidx[4:0]] : lens[lidx];
 
     reg  [8:0]  cnt_at;
     always @(*) begin
@@ -402,7 +401,7 @@ module inflate (
                         T_D: cntD[k] <= 9'd0;
                         default: cntL[k] <= 9'd0;
                     endcase
-                bi <= 9'd0; bph <= 2'd0; st <= S_B_CNT;
+                bi <= 9'd0; lidx <= (tsel == T_D) ? hlit : 9'd0; bph <= 2'd0; st <= S_B_CNT;
             end
             // count codes of each length: read length, then increment
             S_B_CNT:
@@ -410,19 +409,21 @@ module inflate (
                     if (bi == bn) begin
                         offs[1] <= 9'd0; bl <= 4'd1; st <= S_B_OFF;
                     end else begin
-                        lreg <= len_at; bph <= 2'd1;
+                        bph <= 2'd3;                 // wait for len_at
                     end
+                end else if (bph == 2'd3) begin
+                    lreg <= len_at; bph <= 2'd1;
                 end else begin
                     case (tsel)
                         T_C: cntC[lreg] <= cntC[lreg] + 9'd1;
                         T_D: cntD[lreg] <= cntD[lreg] + 9'd1;
                         default: cntL[lreg] <= cntL[lreg] + 9'd1;
                     endcase
-                    bi <= bi + 9'd1; bph <= 2'd0;
+                    bi <= bi + 9'd1; lidx <= lidx + 9'd1; bph <= 2'd0;
                 end
             S_B_OFF:
                 if (bl == 4'd15) begin
-                    bi <= 9'd0; bph <= 2'd0; st <= S_B_SYM;
+                    bi <= 9'd0; lidx <= (tsel == T_D) ? hlit : 9'd0; bph <= 2'd0; st <= S_B_SYM;
                 end else begin
                     offs[bl + 4'd1] <= offs[bl] + cnt_bl;
                     bl <= bl + 4'd1;
@@ -433,23 +434,25 @@ module inflate (
                 2'd0:
                     if (bi == bn)
                         st <= bret;
-                    else begin
-                        lreg <= len_at; bph <= 2'd1;
-                    end
+                    else
+                        bph <= 2'd3;                 // wait for len_at
+                2'd3: begin
+                    lreg <= len_at; bph <= 2'd1;
+                end
                 2'd1:
                     if (lreg == 4'd0) begin
-                        bi <= bi + 9'd1; bph <= 2'd0;
+                        bi <= bi + 9'd1; lidx <= lidx + 9'd1; bph <= 2'd0;
                     end else begin
                         oreg <= offs[lreg]; bph <= 2'd2;
                     end
-                default: begin
+                2'd2: begin
                     case (tsel)
                         T_C: symC[oreg[4:0]] <= bi[4:0];
                         T_D: symD[oreg[4:0]] <= bi[4:0];
                         default: symL[oreg] <= bi;
                     endcase
                     offs[lreg] <= oreg + 9'd1;
-                    bi <= bi + 9'd1; bph <= 2'd0;
+                    bi <= bi + 9'd1; lidx <= lidx + 9'd1; bph <= 2'd0;
                 end
                 endcase
 
