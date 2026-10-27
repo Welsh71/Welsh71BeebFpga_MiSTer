@@ -149,7 +149,7 @@ parameter CONF_STR = {
 	"R0,Reset;",
 	"JA,Fire;",
 	"I,Compressed UEF could not be decompressed,No UEF header - playing as raw bitstream,UEF tape ready,Tape ejected;",
-	"V,timing-",`BUILD_DATE
+	"V,PSMain-",`BUILD_DATE
 };
 
 wire mmfsv1;
