@@ -63,7 +63,22 @@ module fdc1772 (
 	// MiSTer: state for the on-screen disk status (disk_osd.v)
 	// [7:0] sector reg, [14:8] head track, [18:15] cmd[7:4], [19] floppy_side,
 	// [20] drive 1, [21] busy, [22] drive LED, [23] a drive is selected
-	output    [23:0] disk_info
+	output    [23:0] disk_info,
+
+	// MiSTer: shared SD port for the Intel 8271 (i8271.v). While ext_mode is high the
+	// 8271 drives the SD requests and the sector buffer, and the 1770 sits idle (it is
+	// not addressed). Lets both controllers share one M10K buffer and SD interface.
+	// ext_* are in the clkcpu domain; ext_busy is in clksys and must be synchronised.
+	input            ext_mode,
+	input            ext_drive,   // 0 = drive 0, 1 = drive 1
+	input     [31:0] ext_lba,
+	input            ext_rd,      // rising edge requests a 512-byte block read
+	input            ext_wr,      // rising edge requests a 512-byte block write
+	output           ext_busy,
+	input      [8:0] ext_addr,    // buffer port (clkcpu, 1-cycle read latency)
+	input      [7:0] ext_din,
+	input            ext_we,
+	output     [7:0] ext_q
 );
 
 
@@ -191,6 +206,7 @@ always @(*) begin
 	endcase
 
 	sector_size = 11'd128 << sector_size_code;
+	if (ext_mode) sd_lba = ext_lba;
 end
 
 always @(posedge clkcpu) begin
@@ -768,11 +784,12 @@ fdc1772_dpram #(8, 10) fifo
 	.q_a(sd_din),
 	.clockb(clkcpu),
 
-	.address_b(fifo_cpuptr_adj),
-	.data_b(data_in),
-	.wren_b(data_in_strobe),
+	.address_b(ext_mode ? {1'b0, ext_addr} : fifo_cpuptr_adj),
+	.data_b(ext_mode ? ext_din : data_in),
+	.wren_b(ext_mode ? ext_we : data_in_strobe),
 	.q_b(fifo_q)
 );
+assign ext_q = fifo_q;
 
 // ------------------ SD card control ------------------------
 localparam SD_IDLE = 0;
@@ -783,13 +800,18 @@ reg [1:0] sd_state;
 reg       sd_card_write;
 reg       sd_card_read;
 
+wire          sd_req_rd = ext_mode ? ext_rd : sd_card_read;
+wire          sd_req_wr = ext_mode ? ext_wr : sd_card_write;
+wire [WIDX:0] sd_fdn    = ext_mode ? {{WIDX{1'b0}}, ext_drive} : fdn;
+assign ext_busy = (sd_state != SD_IDLE);
+
 always @(posedge clksys) begin
 	reg sd_ackD;
 	reg sd_card_readD;
 	reg sd_card_writeD;
 
-	sd_card_readD <= sd_card_read;
-	sd_card_writeD <= sd_card_write;
+	sd_card_readD <= sd_req_rd;
+	sd_card_writeD <= sd_req_wr;
 	sd_ackD <= sd_ack;
 	if (sd_ack) {sd_rd, sd_wr} <= 0;
 
@@ -797,12 +819,12 @@ always @(posedge clksys) begin
 	SD_IDLE:
 	begin
 		s_odd <= 1'b0;
-		if (~sd_card_readD & sd_card_read) begin
-			sd_rd[fdn] <= 1;
+		if (~sd_card_readD & sd_req_rd) begin
+			sd_rd[sd_fdn] <= 1;
 			sd_state <= SD_READ;
 		end
-		else if (~sd_card_writeD & sd_card_write) begin
-			sd_wr[fdn] <= 1;
+		else if (~sd_card_writeD & sd_req_wr) begin
+			sd_wr[sd_fdn] <= 1;
 			sd_state <= SD_WRITE;
 		end
 	end
@@ -813,7 +835,7 @@ always @(posedge clksys) begin
 			sd_state <= SD_IDLE;
 		end else begin
 			s_odd <= 1;
-			sd_rd[fdn] <= 1;
+			sd_rd[sd_fdn] <= 1;
 		end
 	end
 
@@ -823,7 +845,7 @@ always @(posedge clksys) begin
 			sd_state <= SD_IDLE;
 		end else begin
 			s_odd <= 1;
-			sd_wr[fdn] <= 1;
+			sd_wr[sd_fdn] <= 1;
 		end
 	end
 
