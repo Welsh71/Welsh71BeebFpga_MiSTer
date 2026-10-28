@@ -317,19 +317,31 @@ wire [18:0] mem_addr;
 wire  [7:0] mem_din;
 
 reg  [18:0] rom_addr;
-reg  [7:0] rom_dout;
+wire [7:0] rom_dout;
 reg  [7:0] rom_data;
 
-(* ram_init_file = "roms/rom.mif" *) reg [7:0] rom[17 * 16384];
+// Two ROMs: the 16 x 16K image (roms/rom.mif, unchanged since 2022) and DFS 1.20 for the
+// 8271 as its own 16K ROM (roms/dnfs.mif), addressed as ROM bank 16. A single 17-bank
+// ROM failed to fit: Quartus mis-planned its block RAM and pushed the OSD and HQ2x
+// memories into flip-flops.
+(* ram_init_file = "roms/rom.mif" *) reg [7:0] rom[16 * 16384];
+(* ram_init_file = "roms/dnfs.mif" *) reg [7:0] dnfs_rom[16384];
 // ROM is only written while reset is held (ioctl download), so the write port uses ioctl_addr alone.
 // Muxing rom_addr in here tied ext_A to every ROM block's write enable and failed timing.
-always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset && ioctl_addr < 17 * 16384) rom[ioctl_addr[18:0]] <= ioctl_dout;
+always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset) rom[ioctl_addr[17:0]] <= ioctl_dout;
 // Read address registered in clk_sys: ext_A changes on gated clk_48 and fans out to ~250
 // ROM blocks through the rom_addr lookup. A memory slot lasts 12 clk_sys and data is
 // latched at its end, so the extra cycle of read latency is safe.
 (* maxfan = 24 *) reg [18:0] rom_addr_r;   // drives every ROM block: let Quartus duplicate it
 always @(posedge clk_sys) rom_addr_r <= rom_addr;
-always @(posedge clk_sys) rom_dout <= rom[rom_addr_r];
+reg  [7:0] rom_dout_main, rom_dout_dnfs;
+reg        rom_hi;
+always @(posedge clk_sys) begin
+	rom_dout_main <= rom[rom_addr_r[17:0]];
+	rom_dout_dnfs <= dnfs_rom[rom_addr_r[13:0]];
+	rom_hi        <= rom_addr_r[18];
+end
+assign rom_dout = rom_hi ? rom_dout_dnfs : rom_dout_main;
 
 
 // Beeb ROM Images
@@ -377,7 +389,7 @@ always @(posedge clk_sys) rom_dout <= rom[rom_addr_r];
 always_comb begin
 	rom_addr[13:0] = mem_addr[13:0];
 	case({m128, mem_addr[17:14]})
-		'b0_00_11: rom_addr[18:14] = fdc_8271 ? 16 : 4; //bbcb/DNFS-1.20.rom (8271) or bbcb/Acorn-DFS-2.26.rom (1770)
+		'b0_00_11: rom_addr[18:14] = fdc_8271 ? 16 : 4; //bbcb/DNFS-1.20.rom (8271, dnfs_rom) or bbcb/Acorn-DFS-2.26.rom (1770)
 		'b0_01_00: rom_addr[18:14] =  0; //bbcb/os12.rom         
 		'b0_10_00: rom_addr[18:14] = mmfsv1 ?  1 : 14; //bbcb/swmmfs.rom (v1) or //bbcb/swmmfs.rom (v2) - Must be in slot 8 because of split RAM/ROM in that slot
 		'b0_11_10: rom_addr[18:14] =  2; //bbcb/ram_master_v6.rom 
