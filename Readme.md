@@ -1,6 +1,18 @@
 # BeebFpga_MiSTer
 
-An experiment in building a BBC Micro MiSTer core by using the [official core](https://github.com/MiSTer-devel/BBCMicro_MiSTer) harness with the updates in the [BeebFPGA](https://github.com/hoglet67/BeebFpga) emulation. The BeebFPGA is actively maintained and incorporates a range of improvements to the emulation over the official MiSTer Core.
+A BBC Micro Model B / Master 128 core for [MiSTer](https://github.com/MiSTer-devel), maintained by Paul Stewart ([Welsh71](https://github.com/Welsh71)).
+
+This continues [sharpie7/BeebFpga_MiSTer](https://github.com/sharpie7/BeebFpga_MiSTer), which brought the [BeebFPGA](https://github.com/hoglet67/BeebFpga) emulation by David Banks ([hoglet67](https://github.com/hoglet67)) and others onto the harness of the [official MiSTer core](https://github.com/MiSTer-devel/BBCMicro_MiSTer). That project has not been updated since 2022, so new work and releases now happen here. All credit for the original port and emulation goes to those authors.
+
+**Downloads:** see the [Releases page](https://github.com/Welsh71/BeebFpga_MiSTer/releases). The `.rbf` files in the `releases/` folder are sharpie7's original 2022 builds and are kept for reference only.
+
+## What's new in this version
+
+- **Current MiSTer framework** (October 2026 `sys`), so the core works with today's Main_MiSTer, scaler, HDMI and analogue output options.
+- **Cassette tape loading** from `.UEF` files (plain or gzip-compressed) via the OSD, with a real MC6850 ACIA and Serial ULA emulation and cassette demodulator. Includes rewind, eject, tape sound (Low / Medium / Loud / Off) and an option to take tape input from the I/O board's ADC instead of a file. See [Cassette Tape](#cassette-tape).
+- **Video timing accuracy fixes** ported from hoglet67's 2022 BeebFPGA work (6845, SAA5050, 6522, video ULA and clock slots), fixing split-screen games such as Elite and Revs.
+- **Floppy disc improvements**: Write Track is now handled properly, so `*FORM` works; the drive activity LED is driven; and there is an optional on-screen disc status display (OSD: *Disk Status* Off / On / On Activity).
+- Timing-closure work across the design for a more reliable 96 MHz build.
 
 This core supports the original features of the MiSTer core:
 - BBC Model B and Master 128 emulation
@@ -28,7 +40,7 @@ This core also supports the following additional features:
 
 Most users will just want the main version described here.
 
-Copy the latest file `releases/BBCMicro_YYYYMMDD.rbf` to the `_Computer` or `_Computer/_Alternative` folder on the root of the MiSTer primary SD card. You can then select the file from the MiSTer boot menu or set to autoboot by editing the `bootcore` in `MiSTer.ini`.
+Download the latest `.rbf` from the [Releases page](https://github.com/Welsh71/BeebFpga_MiSTer/releases) and copy it to the `_Computer` or `_Computer/_Alternative` folder on the root of the MiSTer primary SD card. You can then select the file from the MiSTer boot menu or set to autoboot by editing the `bootcore` in `MiSTer.ini`.
 
 ### ICE (In Circuit Emulator) Version
 
@@ -90,6 +102,20 @@ Both MMFS and DFS may be activated at once. However, I am told by the author of 
 If you have both active then note that MMFS will treat `*DISC` and `*DISK` commands as belonging to it. You can used `*OPT 5,1` to disable this and have DFS respond to these commands.
 
 If you have both active then for the Master 128 you can choose which to have as default (it will put the right value in the CMOS). On the Model B the highest numbered ROM (MMFS) will be the default.
+
+## Cassette Tape
+
+The core emulates the BBC's cassette interface (MC6850 ACIA at &FE08 and the Serial ULA at &FE10), so the normal tape filing system in MOS works.
+
+1. Put your `.uef` files in the `games/BBCMicro` folder on the MiSTer SD card. Compressed (gzipped) UEFs work too.
+2. In the OSD choose **Load Tape** and pick a file. The menu confirms when the tape is ready.
+3. On the BBC type `*TAPE` (needed if a disc filing system is active), then `CHAIN""` or `*RUN`, as you would on a real machine. The tape runs whenever the motor relay is on.
+
+Other options:
+- **Rewind Tape** - go back to the start of the tape.
+- **Eject Tape** - unload the tape image.
+- **Tape Input: File / ADC** - use a loaded UEF, or a real cassette player connected to the I/O board's audio input.
+- **Tape Sound** - hear the tape while it loads, at Low, Medium or Loud volume, or Off.
 
 ## Hardware
 
@@ -175,6 +201,8 @@ As it was back in the day, interlaced video will judder a little on some display
 - Master 128 does not save its CMOS settings, though some important values can be configured via F12 OSD
 - The "VideoNuLA" (a modern upgrade to the original VideoULA) is not supported.
 - Selecting Drives 2 and 3 in DFS creates some odd results.
+- Saving to tape (`*SAVE` with `*TAPE`) is not supported yet.
+- The ICE version has not been rebuilt on the new framework; only the 2022 ICE builds in `releases/` are available.
 
 
 ## Some Development Notes
