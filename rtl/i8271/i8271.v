@@ -77,8 +77,8 @@ localparam IDX_TICKS   = 20'd16000;   // 4ms index pulse
 localparam SECT_TICKS  = 20'd80000;   // 20ms per sector slot (10 per revolution)
 
 // ------------------------------------------------------------------ image info
-reg  [1:0] present;
-reg  [1:0] dsided;
+reg  [1:0] present = 2'b00;
+reg  [1:0] dsided  = 2'b00;
 reg  [1:0] img_mounted_d;
 always @(posedge clk) begin
 	img_mounted_d <= img_mounted;
@@ -90,10 +90,8 @@ always @(posedge clk) begin
 		present[1] <= |img_size;
 		dsided[1]  <= img_size > 32'd409500;
 	end
-	if (reset) begin
-		present <= 2'b00;
-		dsided  <= 2'b00;
-	end
+	// Not cleared by reset: BREAK, or the autostart reset that follows mounting an image,
+	// must not make the drives look empty (fdc1772.v keeps this state the same way).
 end
 
 // ------------------------------------------------------------------ registers

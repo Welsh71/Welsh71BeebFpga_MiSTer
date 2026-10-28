@@ -91,7 +91,9 @@ video_freak video_freak
 // D-E   - Aspect ratio
 // F-G   - Image scaling
 // H      - Reserved - MMFS or Floppy
-// P-R (25-27) - MMFS V1 or V2
+// P-R (25-27) - Master filesystem: MMFSv1, MMFSv2, DFS, MMFSv1&DFS, MMFSv2&DFS
+// o2-o4 (34-36) - Model B filesystem: DFS 1.2 (8271), DFS 1770, MMFSv1, MMFSv2,
+//                 MMFSv1 & DFS 1.2, MMFSv1 & DFS 1770, MMFSv2 & DFS 1.2, MMFSv2 & DFS 1770
 // S (28)- M7 Video opt
 // T (29)- Master shadow video mode on boot
 // U (30)- Master default FS
@@ -107,11 +109,14 @@ video_freak video_freak
 // 1 - DFS active
 // 2 - Master selected
 // 3 - Master selected and both MMFS and DFS active
+// 4 - Model B selected
 
 `include "build_id.v" 
 parameter AUTO_START_OPT = 12;
 parameter FILE_SYS_OPT_L = 25;
 parameter FILE_SYS_OPT_H = 27;
+parameter B_FS_OPT_L = 34;
+parameter B_FS_OPT_H = 36;
 parameter M7_VIDEO_OPT = 28;
 parameter M128_SHADOW_OPT = 29;
 parameter M128_FS_OPT = 30;
@@ -119,7 +124,8 @@ parameter M128_FS_OPT = 30;
 parameter CONF_STR = {
 	"BBCMicro;;",
 	"-;",
-	"OPR,Filesystem,MMFSv1,MMFSv2,DFS,MMFSv1&DFS,MMFSv2&DFS;",
+	"h4o24,Filesystem,DFS 1.2 only,DFS 1770 only,MMFSv1,MMFSv2,MMFSv1 & DFS 1.2,MMFSv1 & DFS 1770,MMFSv2 & DFS 1.2,MMFSv2 & DFS 1770;",
+	"h2OPR,Filesystem,MMFSv1,MMFSv2,DFS,MMFSv1&DFS,MMFSv2&DFS;",
 	"h0S0,VHDIMGMMB;", // Allow .VHD or .MMB files to be loaded (MMFSv1) or .IMG (MMFS v2)
 	"h1S1,SSDDSD;",
 	"h1S2,SSDDSD;",
@@ -152,16 +158,22 @@ parameter CONF_STR = {
 	"V,PSMain-",`BUILD_DATE
 };
 
-wire mmfsv1;
-wire mmfsv2;
-wire mmfs;
-wire dfs;
-wire model_master;
-assign mmfsv1 = (status[FILE_SYS_OPT_H:FILE_SYS_OPT_L] === 0) || (status[FILE_SYS_OPT_H:FILE_SYS_OPT_L] === 3);
-assign mmfsv2 = (status[FILE_SYS_OPT_H:FILE_SYS_OPT_L] === 1) || (status[FILE_SYS_OPT_H:FILE_SYS_OPT_L] === 4);
-assign mmfs = mmfsv1 || mmfsv2;
-assign dfs = status[FILE_SYS_OPT_H:FILE_SYS_OPT_L] >= 2;
-assign model_master = status[4];
+wire model_master = status[4];
+
+// Filesystem choice. The Master keeps its original list (status 25-27, so saved settings
+// carry over); the Model B has its own list (status 34-36) that adds the Intel 8271 with
+// DFS 1.20, its default. fs_*(master) decodes either list for a given model.
+wire [2:0] fs_m = status[FILE_SYS_OPT_H:FILE_SYS_OPT_L];
+wire [2:0] fs_b = status[B_FS_OPT_H:B_FS_OPT_L];
+function fs_mmfsv1(input master, input [2:0] m, input [2:0] b); fs_mmfsv1 = master ? (m == 0 || m == 3) : (b == 2 || b == 4 || b == 5); endfunction
+function fs_mmfsv2(input master, input [2:0] m, input [2:0] b); fs_mmfsv2 = master ? (m == 1 || m == 4) : (b == 3 || b == 6 || b == 7); endfunction
+function fs_dfs   (input master, input [2:0] m, input [2:0] b); fs_dfs    = master ? (m >= 2)            : (b != 2 && b != 3);           endfunction
+function fs_8271  (input master,                input [2:0] b); fs_8271   = !master && (b == 0 || b == 4 || b == 6);                   endfunction
+
+// Menu visibility follows the model selected in the menu. The machine itself follows the
+// model latched at reset (m128): see mmfsv1/mmfsv2/dfs/fdc_8271 below.
+wire osd_mmfs = fs_mmfsv1(model_master, fs_m, fs_b) || fs_mmfsv2(model_master, fs_m, fs_b);
+wire osd_dfs  = fs_dfs(model_master, fs_m, fs_b);
 
 
 /////////////////  CLOCKS  ////////////////////////
@@ -246,7 +258,7 @@ hps_io #(.CONF_STR(CONF_STR),.VDNUM(3),.BLKSZ(2)) hps_io // IES Updated from c24
 
 	.buttons(buttons),
 	.status(status),
-	.status_menumask({(model_master && dfs && mmfs), model_master, dfs , mmfs}),
+	.status_menumask({~model_master, (model_master && osd_dfs && osd_mmfs), model_master, osd_dfs, osd_mmfs}),
 	.forced_scandoubler(forced_scandoubler),
 	.gamma_bus(gamma_bus),
 
@@ -291,22 +303,31 @@ wire reset = RESET | status[0] | buttons[1] | (status[AUTO_START_OPT] & img_moun
 reg m128 = 0;
 always @(posedge clk_sys) if(reset_req) m128 <= model_master;
 
+// Filesystem for the running machine (see fs_* above), so changing the menu never swaps
+// ROMs or the disc controller under a running machine.
+wire mmfsv1 = fs_mmfsv1(m128, fs_m, fs_b);
+wire mmfsv2 = fs_mmfsv2(m128, fs_m, fs_b);
+wire mmfs   = mmfsv1 || mmfsv2;
+wire dfs    = fs_dfs(m128, fs_m, fs_b);
+reg  fdc_8271 = 1'b1;   // Model B: Intel 8271 + DFS 1.20, else WD1770 + DFS 2.26
+always @(posedge clk_sys) if(reset_req) fdc_8271 <= fs_8271(model_master, fs_b);
+
 wire        mem_we_n;
 wire [18:0] mem_addr;
 wire  [7:0] mem_din;
 
-reg  [17:0] rom_addr;
+reg  [18:0] rom_addr;
 reg  [7:0] rom_dout;
 reg  [7:0] rom_data;
 
-(* ram_init_file = "roms/rom.mif" *) reg [7:0] rom[16 * 16384];
+(* ram_init_file = "roms/rom.mif" *) reg [7:0] rom[17 * 16384];
 // ROM is only written while reset is held (ioctl download), so the write port uses ioctl_addr alone.
 // Muxing rom_addr in here tied ext_A to every ROM block's write enable and failed timing.
-always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset) rom[ioctl_addr[17:0]] <= ioctl_dout;
+always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset && ioctl_addr < 17 * 16384) rom[ioctl_addr[18:0]] <= ioctl_dout;
 // Read address registered in clk_sys: ext_A changes on gated clk_48 and fans out to ~250
 // ROM blocks through the rom_addr lookup. A memory slot lasts 12 clk_sys and data is
 // latched at its end, so the extra cycle of read latency is safe.
-(* maxfan = 24 *) reg [17:0] rom_addr_r;   // drives every ROM block: let Quartus duplicate it
+(* maxfan = 24 *) reg [18:0] rom_addr_r;   // drives every ROM block: let Quartus duplicate it
 always @(posedge clk_sys) rom_addr_r <= rom_addr;
 always @(posedge clk_sys) rom_dout <= rom[rom_addr_r];
 
@@ -320,7 +341,7 @@ always @(posedge clk_sys) rom_dout <= rom[rom_addr_r];
 // 00 00xx empty     
 // 00 01xx empty     
 // 00 10xx empty     
-// 00 11xx m128/dfs.rom     
+// 00 11xx bbcb/Acorn-DFS-2.26.rom (1770), or bbcb/DNFS-1.20.rom (8271, ROM image bank 16)
 // 01 00xx bbcb/os12.rom   - High ROM     
 // 01 01xx empty     
 // 01 10xx empty     
@@ -356,21 +377,21 @@ always @(posedge clk_sys) rom_dout <= rom[rom_addr_r];
 always_comb begin
 	rom_addr[13:0] = mem_addr[13:0];
 	case({m128, mem_addr[17:14]})
-		'b0_00_11: rom_addr[17:14] =  4; //bbcb/Acorn-DFS-2.26.rom
-		'b0_01_00: rom_addr[17:14] =  0; //bbcb/os12.rom         
-		'b0_10_00: rom_addr[17:14] = mmfsv1 ?  1 : 14; //bbcb/swmmfs.rom (v1) or //bbcb/swmmfs.rom (v2) - Must be in slot 8 because of split RAM/ROM in that slot
-		'b0_11_10: rom_addr[17:14] =  2; //bbcb/ram_master_v6.rom 
-		'b0_11_11: rom_addr[17:14] =  3; //bbcb/basic2.rom           
-		'b1_00_11: rom_addr[17:14] = mmfsv1 ?  5 : 15;  //m128/mammfs.rom  (v1) //m128/mammfs.rom (v2)	
-		'b1_01_00: rom_addr[17:14] =  6; //m128/mos.rom          
-		'b1_10_01: rom_addr[17:14] =  7; //m128/dfs.rom          
-		'b1_10_10: rom_addr[17:14] =  8; //m128/viewsht.rom      
-		'b1_10_11: rom_addr[17:14] =  9; //m128/edit.rom         
-		'b1_11_00: rom_addr[17:14] = 10; //m128/basic4.rom       
-		'b1_11_01: rom_addr[17:14] = 11; //m128/adfs.rom         
-		'b1_11_10: rom_addr[17:14] = 12; //m128/view.rom         
-		'b1_11_11: rom_addr[17:14] = 13; //m128/terminal.rom      
-		  default: rom_addr[17:14] =  0;
+		'b0_00_11: rom_addr[18:14] = fdc_8271 ? 16 : 4; //bbcb/DNFS-1.20.rom (8271) or bbcb/Acorn-DFS-2.26.rom (1770)
+		'b0_01_00: rom_addr[18:14] =  0; //bbcb/os12.rom         
+		'b0_10_00: rom_addr[18:14] = mmfsv1 ?  1 : 14; //bbcb/swmmfs.rom (v1) or //bbcb/swmmfs.rom (v2) - Must be in slot 8 because of split RAM/ROM in that slot
+		'b0_11_10: rom_addr[18:14] =  2; //bbcb/ram_master_v6.rom 
+		'b0_11_11: rom_addr[18:14] =  3; //bbcb/basic2.rom           
+		'b1_00_11: rom_addr[18:14] = mmfsv1 ?  5 : 15;  //m128/mammfs.rom  (v1) //m128/mammfs.rom (v2)	
+		'b1_01_00: rom_addr[18:14] =  6; //m128/mos.rom          
+		'b1_10_01: rom_addr[18:14] =  7; //m128/dfs.rom          
+		'b1_10_10: rom_addr[18:14] =  8; //m128/viewsht.rom      
+		'b1_10_11: rom_addr[18:14] =  9; //m128/edit.rom         
+		'b1_11_00: rom_addr[18:14] = 10; //m128/basic4.rom       
+		'b1_11_01: rom_addr[18:14] = 11; //m128/adfs.rom         
+		'b1_11_10: rom_addr[18:14] = 12; //m128/view.rom         
+		'b1_11_11: rom_addr[18:14] = 13; //m128/terminal.rom      
+		  default: rom_addr[18:14] =  0;
 	endcase
 end
 
@@ -555,6 +576,7 @@ bbc_micro_core BBCMicro(
 	.m128_mode(m128),
 	.copro_mode(|status[6:5]),
 	
+	.fdc_8271       ( fdc_8271       ),
 	.img_mounted    ( img_mounted[2:1] ),
 	.img_size       ( img_size       ),
 	.sd_lba         ( fd_sd_lba      ),

@@ -220,6 +220,7 @@ entity bbc_micro_core is
 
 
 		-- FDC signals
+		fdc_8271       : in   std_logic := '0';  -- Model B: Intel 8271 (DFS 1.20) instead of the 1770
 		img_mounted    : in   std_logic_vector(1 downto 0);
 		img_size       : in   std_logic_vector(31 downto 0);
 		sd_lba         : out  std_logic_vector(31 downto 0);
@@ -304,6 +305,45 @@ component fdc1772 is
 		sd_dout          : in  std_logic_vector( 7 downto 0);
 		sd_din           : out std_logic_vector( 7 downto 0);
 		sd_dout_strobe   : in  std_logic;
+		drive_led        : out std_logic;
+		disk_info        : out std_logic_vector(23 downto 0);
+
+		ext_mode         : in  std_logic;
+		ext_drive        : in  std_logic;
+		ext_lba          : in  std_logic_vector(31 downto 0);
+		ext_rd           : in  std_logic;
+		ext_wr           : in  std_logic;
+		ext_busy         : out std_logic;
+		ext_addr         : in  std_logic_vector( 8 downto 0);
+		ext_din          : in  std_logic_vector( 7 downto 0);
+		ext_we           : in  std_logic;
+		ext_q            : out std_logic_vector( 7 downto 0)
+	);
+end component ;
+
+component i8271 is
+	port (
+		clk              : in  std_logic;
+		ce4m             : in  std_logic;
+		reset            : in  std_logic;
+		cpu_ce           : in  std_logic;
+		cpu_sel          : in  std_logic;
+		cpu_rw           : in  std_logic;
+		cpu_addr         : in  std_logic_vector( 2 downto 0);
+		cpu_din          : in  std_logic_vector( 7 downto 0);
+		cpu_dout         : out std_logic_vector( 7 downto 0);
+		nmi              : out std_logic;
+		img_mounted      : in  std_logic_vector( 1 downto 0);
+		img_size         : in  std_logic_vector(31 downto 0);
+		ext_drive        : out std_logic;
+		ext_lba          : out std_logic_vector(31 downto 0);
+		ext_rd           : out std_logic;
+		ext_wr           : out std_logic;
+		ext_busy         : in  std_logic;
+		buf_addr         : out std_logic_vector( 8 downto 0);
+		buf_din          : out std_logic_vector( 7 downto 0);
+		buf_we           : out std_logic;
+		buf_q            : in  std_logic_vector( 7 downto 0);
 		drive_led        : out std_logic;
 		disk_info        : out std_logic_vector(23 downto 0)
 	);
@@ -716,6 +756,25 @@ signal rtc_ce          : std_logic;
 signal rtc_r_nw        : std_logic;
 signal rtc_as          : std_logic;
 signal rtc_ds          : std_logic;
+
+-- Intel 8271 (Model B, DFS 1.20). Shares fdc1772's SD port and sector buffer.
+signal i8271_active     : std_logic;   -- 8271 selected and in Model B mode
+signal i8271_enable     : std_logic;   -- 0xFE80-0xFE9F
+signal i8271_do         : std_logic_vector(7 downto 0);
+signal i8271_nmi        : std_logic;
+signal i8271_led        : std_logic;
+signal i8271_info       : std_logic_vector(23 downto 0);
+signal x_drive          : std_logic;
+signal x_lba            : std_logic_vector(31 downto 0);
+signal x_rd             : std_logic;
+signal x_wr             : std_logic;
+signal x_busy           : std_logic;
+signal x_addr           : std_logic_vector(8 downto 0);
+signal x_din            : std_logic_vector(7 downto 0);
+signal x_we             : std_logic;
+signal x_q              : std_logic_vector(7 downto 0);
+signal fdc_led          : std_logic;
+signal fdc_info         : std_logic_vector(23 downto 0);
 
 -- FDC1770
 signal fdc_irq          : std_logic;
@@ -1676,7 +1735,9 @@ begin
     cpu_mode <= "00"; -- 6502
     cpu_ready <= '1';
     cpu_abort_n <= '1';
-    cpu_nmi_n <= not fdc_irq and  not fdc_drq;
+    i8271_active <= fdc_8271 and not m128_mode;
+    cpu_nmi_n <= not i8271_nmi when i8271_active = '1' else
+                 not fdc_irq and  not fdc_drq;
     cpu_so_n <= '1';
     cpu_nr_w <= not cpu_r_nw;
 
@@ -1735,7 +1796,7 @@ begin
     -- 0xFEA0 - 0xFEBF = 68B54 ADLC for Econet
     -- 0xFEC0 - 0xFEDF = uPD7002 ADC
     -- 0xFEE0 - 0xFEFF = Tube ULA
-    process(cpu_a,io_sheila,m128_mode,copro_mode,cpu_r_nw,acc_itu)
+    process(cpu_a,io_sheila,m128_mode,copro_mode,cpu_r_nw,acc_itu,i8271_active)
     begin
         -- All regions normally de-selected
 		test_fe80 <= '0';
@@ -1749,6 +1810,7 @@ begin
         mouse_via_enable <= '0';
 		fdc_enable<='0';
 		fdcon_enable<='0';
+		i8271_enable <= '0';
  --     adlc_enable <= '0';
         adc_enable <= '0';
         int_tube_enable <= '0';
@@ -1822,6 +1884,8 @@ begin
 					  test_fe80 <= '1';
                     if (m128_mode = '1' and IncludeAMXMouse) then
                         user_via_enable <= '1';
+                    elsif i8271_active = '1' then -- FE80 - FE9F Intel 8271 for BBC B (DFS 1.20)
+                        i8271_enable <= '1';
                     elsif (m128_mode = '0' and cpu_a(2)='1') then -- FE84 - FE87 FDC for BBC B
 						fdc_enable<='1';
 					elsif (m128_mode = '0' and cpu_a(2 downto 0)="000") then -- FE80 FDC for BBC B
@@ -1961,6 +2025,7 @@ begin
         -- Master 128 additions
         romsel         when romsel_enable = '1' and m128_mode = '1' else
 		fdc_do 		   when fdc_enable = '1' else
+		i8271_do       when i8271_enable = '1' else
         acccon         when acccon_enable = '1' and m128_mode = '1' else
         "11111110"     when io_sheila = '1' else
         "11111111"     when io_fred = '1' or io_jim = '1' else
@@ -2145,10 +2210,52 @@ begin
 		floppy_motor => not floppy_motor,
 		floppy_side =>  floppy_side,
 		floppy_reset => floppy_reset,
-		drive_led => floppy_led,
-		disk_info => floppy_info
+		drive_led => fdc_led,
+		disk_info => fdc_info,
 
+		ext_mode  => i8271_active,
+		ext_drive => x_drive,
+		ext_lba   => x_lba,
+		ext_rd    => x_rd,
+		ext_wr    => x_wr,
+		ext_busy  => x_busy,
+		ext_addr  => x_addr,
+		ext_din   => x_din,
+		ext_we    => x_we,
+		ext_q     => x_q
 	);
+
+	-- Intel 8271 (Model B, DFS 1.20)
+	fdc8271 : i8271
+	port map
+	(
+		clk         => clock_48,
+		ce4m        => mhz4_clken,
+		reset       => not reset_n,
+		cpu_ce      => cpu_clken,
+		cpu_sel     => i8271_enable,
+		cpu_rw      => cpu_r_nw,
+		cpu_addr    => cpu_a(2 downto 0),
+		cpu_din     => cpu_do,
+		cpu_dout    => i8271_do,
+		nmi         => i8271_nmi,
+		img_mounted => img_mounted,
+		img_size    => img_size,
+		ext_drive   => x_drive,
+		ext_lba     => x_lba,
+		ext_rd      => x_rd,
+		ext_wr      => x_wr,
+		ext_busy    => x_busy,
+		buf_addr    => x_addr,
+		buf_din     => x_din,
+		buf_we      => x_we,
+		buf_q       => x_q,
+		drive_led   => i8271_led,
+		disk_info   => i8271_info
+	);
+
+	floppy_led  <= i8271_led  when i8271_active = '1' else fdc_led;
+	floppy_info <= i8271_info when i8271_active = '1' else fdc_info;
 
 
 -- From MAME:

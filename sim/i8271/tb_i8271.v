@@ -4,9 +4,15 @@
 //
 // Run (OSS CVC):  cp ../../rtl/i8271/i8271.v . && cvc64 +large tb_i8271.v i8271.v && ./cvcsim
 //
-// The SD card and fdc1772's shared sector buffer are modelled here: a rising edge on
-// ext_rd/ext_wr moves one 512-byte block between the buffer and an image array, with
-// ext_busy high meanwhile. Drive 0 holds an 80-track .ssd (204,800 bytes) and drive 1
+// By default the SD card and fdc1772's shared sector buffer are modelled here: a rising
+// edge on ext_rd/ext_wr moves one 512-byte block between the buffer and an image array,
+// with ext_busy high meanwhile.
+//
+// With +define+USE_FDC1772 the 8271 runs through the real fdc1772.v (ext_mode high, the
+// 1770 held in reset as in the core) and an SD model that behaves like hps_io: sd_rd or
+// sd_wr, then sd_ack with sd_buff_addr stepping through the block. Build the sim copy of
+// fdc1772 as in sim/fdc, then:
+//   cvc64 +large +define+USE_FDC1772 tb_i8271.v i8271.v fdc_sim.v floppy_sim.v && ./cvcsim Drive 0 holds an 80-track .ssd (204,800 bytes) and drive 1
 // an 80-track .dsd (409,600 bytes). Every image byte starts as a pattern of its
 // position, so a byte read back shows exactly which track, side, sector and offset it
 // came from.
@@ -68,6 +74,7 @@ initial begin
 	for (i = 0; i < 409600; i = i + 1) img1[i] = pat(i) ^ 8'hFF;
 end
 
+`ifndef USE_FDC1772
 always @(posedge clk) begin
 	if (buf_we) buffer[buf_addr] <= buf_din;
 	buf_q <= buffer[buf_addr];
@@ -96,6 +103,57 @@ always @(posedge clk) begin
 		ext_busy <= 0;
 	end
 end
+
+`else
+// ---- the real fdc1772 (sector buffer and SD state machine) plus an hps_io-style SD card
+reg clksys = 0;
+always #5.20833 clksys = ~clksys;      // 96MHz
+wire [31:0] sd_lba;
+wire  [1:0] sd_rd, sd_wr;
+reg         sd_ack = 0;
+reg   [8:0] sd_buff_addr = 0;
+reg   [7:0] sd_dout = 0;
+reg         sd_dout_strobe = 0;
+wire  [7:0] sd_din;
+wire        ext_busy_w;
+wire  [7:0] buf_q_w;
+always @(*) ext_busy = ext_busy_w;
+always @(*) buf_q = buf_q_w;
+
+fdc1772 fdc(.clksys(clksys), .clkcpu(clk), .clk8m_en(ce4m),
+	.floppy_drive(2'b11), .floppy_side(1'b1), .floppy_reset(1'b0), .floppy_motor(1'b1),
+	.cpu_addr(2'd0), .cpu_sel(1'b0), .cpu_rw(1'b1), .cpu_din(8'd0),
+	.img_mounted(img_mounted), .img_wp(2'b00), .img_size(img_size),
+	.sd_lba(sd_lba), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
+	.sd_buff_addr(sd_buff_addr), .sd_dout(sd_dout), .sd_din(sd_din), .sd_dout_strobe(sd_dout_strobe),
+	.ext_mode(1'b1), .ext_drive(ext_drive), .ext_lba(ext_lba), .ext_rd(ext_rd), .ext_wr(ext_wr),
+	.ext_busy(ext_busy_w), .ext_addr(buf_addr), .ext_din(buf_din), .ext_we(buf_we), .ext_q(buf_q_w));
+
+integer xfers = 0;
+integer sd_n;
+reg sd_isrd, sd_d1;
+always @(posedge clksys) if ((|sd_rd || |sd_wr) && !sd_ack) begin : sdm
+	sd_isrd = |sd_rd;
+	sd_d1   = sd_rd[1] | sd_wr[1];
+	xfers = xfers + 1;
+	if (sd_rd[0] & sd_rd[1]) $display("FAIL: both drives requested");
+	repeat (500) @(posedge clksys);
+	sd_ack <= 1;
+	for (sd_n = 0; sd_n < 512; sd_n = sd_n + 1) begin
+		@(posedge clksys);
+		sd_buff_addr <= sd_n;
+		if (sd_isrd) begin
+			sd_dout <= sd_d1 ? img1[sd_lba*512 + sd_n] : img0[sd_lba*512 + sd_n];
+			sd_dout_strobe <= 1;
+			@(posedge clksys); sd_dout_strobe <= 0;
+		end else begin
+			@(posedge clksys); @(posedge clksys);
+			if (sd_d1) img1[sd_lba*512 + sd_n] = sd_din; else img0[sd_lba*512 + sd_n] = sd_din;
+		end
+	end
+	@(posedge clksys); sd_ack <= 0;
+end
+`endif
 
 // ------------------------------------------------------------------ CPU bus
 reg [7:0] rd;
@@ -206,6 +264,9 @@ initial begin
 	// mount images (hps_io pulses img_mounted with img_size valid)
 	img_size <= 204800; img_mounted <= 2'b01; repeat (4) @(posedge clk); img_mounted <= 0;
 	img_size <= 409600; img_mounted <= 2'b10; repeat (4) @(posedge clk); img_mounted <= 0;
+
+	// a machine reset after mounting (BREAK, or the autostart reset) keeps the discs
+	repeat (100) @(posedge clk); reset <= 1; repeat (100) @(posedge clk); reset <= 0;
 
 	// DFS-style reset of the 8271
 	bus_write(2, 1); bus_write(2, 0);

@@ -28,7 +28,9 @@ module tb;
     .img_mounted(img_mounted), .img_wp(img_wp), .img_size(img_size),
     .sd_lba(sd_lba), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
     .sd_buff_addr(sd_buff_addr), .sd_dout(sd_dout), .sd_din(sd_din),
-    .sd_dout_strobe(sd_dout_strobe), .drive_led(led));
+    .sd_dout_strobe(sd_dout_strobe), .drive_led(led),
+    .ext_mode(1'b0), .ext_drive(1'b0), .ext_lba(32'd0), .ext_rd(1'b0), .ext_wr(1'b0),
+    .ext_addr(9'd0), .ext_din(8'd0), .ext_we(1'b0));
 
   // ---- SD card model: answers reads with a pattern derived from the LBA ----
   integer sdreads = 0, sdwrites = 0;
