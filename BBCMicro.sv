@@ -396,6 +396,14 @@ end
 
 reg [7:0] ram_dout;
 
+// RAM bank 12 (SWMMFS workspace at B600-BFFF, Model B only) shares bank 11 (16K shadow
+// memory at 4000-7FFF, Master only). The two are never used in the same model, and
+// changing model resets the machine, so one 16K bank serves both. This frees 16 M10K
+// blocks (used by the DFS 1.20 ROM for the 8271).
+function [17:0] ram_index(input [17:0] a);
+	ram_index = (a[17:14] == 4'd12) ? {4'd11, a[13:0]} : a;
+endfunction
+
 // RAM write port registered in clk_sys. ext_A/ext_nWE/ext_Din come from the gated clk_48
 // domain and previously drove the write-enable decode of ~200 M10K blocks combinationally,
 // with the write landing on the first clk_sys edge (single-cycle path, failed at 96MHz).
@@ -405,13 +413,14 @@ reg [17:0] ram_waddr_r;
 reg  [7:0] ram_wdata_r;
 always @(posedge clk_sys) begin
 	ram_we_r    <= mem_addr[18] & old_we & ~mem_we_n;
-	ram_waddr_r <= mem_addr[17:0];
+	ram_waddr_r <= ram_index(mem_addr[17:0]);
 	ram_wdata_r <= mem_din;
 end
 
 // Read address registered for the same reason as the ROM (see rom_addr_r).
 reg [17:0] ram_raddr_r;
-always @(posedge clk_sys) ram_raddr_r <= mem_addr[17:0];
+always @(posedge clk_sys) ram_raddr_r <= ram_index(mem_addr[17:0]);
+
 
 // See definition of use_small_memory for explanation
 `ifdef use_small_memory
@@ -419,7 +428,7 @@ always @(posedge clk_sys) ram_raddr_r <= mem_addr[17:0];
 	always @(posedge clk_sys) if(ram_we_r & ram_waddr_r[17]) ram[ram_waddr_r[16:0]] <= ram_wdata_r;
 	always @(posedge clk_sys) if(ram_raddr_r[17]) ram_dout <= ram[ram_raddr_r[16:0]]; else ram_dout <=0;
 `else
-	reg [7:0] ram[212992];
+	reg [7:0] ram[196608]; // 12 x 16K: bank 12 is folded onto bank 11 by ram_index
 	always @(posedge clk_sys) if(ram_we_r) ram[ram_waddr_r] <= ram_wdata_r;
 	always @(posedge clk_sys) ram_dout <= ram[ram_raddr_r];
 `endif
@@ -444,7 +453,7 @@ always @(posedge clk_sys) old_we <= mem_we_n;
 // 10 1010  Private RAM (4K, at 8000-8FFF)       (unused in Beeb Mode)
 // 10 1011  Shadow memory (4K, at 3000-3FFF)     (unused in Beeb Mode)
 // 10 11xx  Shadow memory (16K, at 4000-7FFF)    (unused in Beeb Mode)
-// 11 00xx  RAM Slot 8 (B600-BFFF) For SWMMFS - BBC B Only
+// 11 00xx  RAM Slot 8 (B600-BFFF) For SWMMFS - BBC B Only. Stored in bank 10 11xx (see ram_index)
 // 11 01xx  unused
 // 11 10xx  unused
 // 11 11xx  unused
