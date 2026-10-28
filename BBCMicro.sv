@@ -769,7 +769,10 @@ disk_osd disk_osd
 );
 
 assign CLK_VIDEO = clk_sys;
-video_mixer #(640, 1, 1) mixer
+// GAMMA=0: the core outputs 4 bits per channel (8 colours), so gamma correction has no
+// visible effect, and without it the scandoubler and HQ2x run at 4 bits per channel
+// (HALF_DEPTH), halving their line buffers. Frees ~15 M10K, needed for the DFS 1.20 ROM.
+video_mixer #(640, 1, 0) mixer
 (
 	// .ce_pix(clock_48 & ce_pix),
 	 .ce_pix(ce_pix),
