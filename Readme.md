@@ -4,7 +4,7 @@ A BBC Micro Model B / Master 128 core for [MiSTer](https://github.com/MiSTer-dev
 
 This continues [sharpie7/BeebFpga_MiSTer](https://github.com/sharpie7/BeebFpga_MiSTer), which brought the [BeebFPGA](https://github.com/hoglet67/BeebFpga) emulation by David Banks ([hoglet67](https://github.com/hoglet67)) and others onto the harness of the [official MiSTer core](https://github.com/MiSTer-devel/BBCMicro_MiSTer). That project has not been updated since 2022, so new work and releases now happen here. All credit for the original port and emulation goes to those authors.
 
-**Downloads:** see the [Releases page](https://github.com/Welsh71/BeebFpga_MiSTer/releases). The `.rbf` files in the `releases/` folder are sharpie7's original 2022 builds and are kept for reference only.
+**Downloads:** see the [Releases page](https://github.com/Welsh71/Welsh71BeebFpga_MiSTer/releases). The `.rbf` files in the `releases/` folder are sharpie7's original 2022 builds and are kept for reference only.
 
 ## What's new in this version
 
@@ -40,7 +40,9 @@ This core also supports the following additional features:
 
 Most users will just want the main version described here.
 
-Download the latest `.rbf` from the [Releases page](https://github.com/Welsh71/BeebFpga_MiSTer/releases) and copy it to the `_Computer` or `_Computer/_Alternative` folder on the root of the MiSTer primary SD card. You can then select the file from the MiSTer boot menu or set to autoboot by editing the `bootcore` in `MiSTer.ini`.
+Download the latest `BBCMicro.Alternate._YYYYMMDD.rbf` from the [Releases page](https://github.com/Welsh71/Welsh71BeebFpga_MiSTer/releases) and copy it to the `_Computer` or `_Computer/_Alternative` folder on the root of the MiSTer primary SD card. You can then select the file from the MiSTer boot menu or set to autoboot by editing the `bootcore` in `MiSTer.ini`.
+
+The file is named `BBCMicro.Alternate._...` so it is easy to tell apart from the official BBC Micro core (`BBCMicro_YYYYMMDD.rbf`), which `update_all` installs and updates. The two can sit side by side, and `update_all` will not replace or remove this one. Both cores use the same `games/BBCMicro` folder for disc and tape images.
 
 ### ICE (In Circuit Emulator) Version
 
