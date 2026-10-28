@@ -8,6 +8,7 @@ This continues [sharpie7/BeebFpga_MiSTer](https://github.com/sharpie7/BeebFpga_M
 
 ## What's new in this version
 
+- **Intel 8271 disc controller with Acorn DFS 1.20 for the Model B**, as fitted to most early Beebs and used by BeebEm by default. It is now the Model B's default disc system, with the 1770 and DFS 2.26 still available from the menu. Software that drives the 8271 directly, and that won't run on a 1770, can now be used. See [Filing Systems](#filing-systems).
 - **Current MiSTer framework** (October 2026 `sys`), so the core works with today's Main_MiSTer, scaler, HDMI and analogue output options.
 - **Cassette tape loading** from `.UEF` files (plain or gzip-compressed) via the OSD, with a real MC6850 ACIA and Serial ULA emulation and cassette demodulator. Includes rewind, eject, tape sound (Low / Medium / Loud / Off) and an option to take tape input from the I/O board's ADC instead of a file. See [Cassette Tape](#cassette-tape).
 - **Video timing accuracy fixes** ported from hoglet67's 2022 BeebFPGA work (6845, SAA5050, 6522, video ULA and clock slots), fixing split-screen games such as Elite and Revs.
@@ -68,11 +69,16 @@ Note that AtomBusMon is loaded with the 65C02 software branch. This can be used 
 
 There are several filing systems supported, and this may seem confusing. As different options support different requirements it seems best to provide the flexibility. One complicating factor is that MiSTer can support two SD cards that are accessed via different means. The primary SD card (on the DE10 Nano) is accessed via the Hard Processor System and presents an API interface to the MiSTer core. The secondary SD card (on the MiSTer expansion) is directly connected to the MiSTer core.
 
-If I doubt I would start with MMFS v1.
+The **Filesystem** menu is different for each model:
+
+- **Model B:** DFS 1.2 only (the default), DFS 1770 only, MMFSv1, MMFSv2, MMFSv1 & DFS 1.2, MMFSv1 & DFS 1770, MMFSv2 & DFS 1.2, MMFSv2 & DFS 1770.
+- **Master 128:** MMFSv1 (the default), MMFSv2, DFS, MMFSv1&DFS, MMFSv2&DFS. The Master always uses its 1770.
+
+Changes take effect at the next reset. If in doubt, use DFS 1.2 on the Model B for `.ssd`/`.dsd` disc images, and MMFS v1 for MMB collections.
 
 ### MMFS v1
 
-The default filing system is [MMFS v1](https://github.com/hoglet67/MMFS). 
+[MMFS v1](https://github.com/hoglet67/MMFS) is the default filing system on the Master 128. 
 
 MMFSv1 uses files in “MMB” format. This was a format originally developed for a BBC Micro add-on that connects SD cards to the user port and makes it look like a virtual set of disk-drives. The MMB file is a bundle of hundreds of BBC floppy disk images. Using commands on the BBC Micro you can choose to mount the images from the file into virtual drives.
 
@@ -95,13 +101,20 @@ An alternative filing system of [MMFS v2](https://github.com/hoglet67/MMFS) may 
 
 ### Acorn DFS
 
-The classic Acorn DFS can be selected and is supported via emulation of the FD1770 controller. In DFS mode you can mount individual SSD and DSD files from the primary SD Card.
+In DFS mode you can mount individual SSD and DSD files from the primary SD Card. The Model B can use either of Acorn's two disc systems:
+
+- **DFS 1.2** (Model B default): Acorn DFS 1.20 with an emulated Intel 8271 controller, the original BBC Micro disc system. This is the best choice for older software, especially games that drive the disc controller directly and fail with a 1770.
+- **DFS 1770**: Acorn DFS 2.26 with an emulated WD1770 controller, as on the later 1770 upgrade boards.
+
+The Master 128 always uses its own DFS with the 1770.
+
+The 8271 is a behavioural model written for this core (see `rtl/i8271`). It covers the commands DFS 1.20 uses, with realistic timing. Copy-protected discs that rely on non-standard track formats need a disc image format that records them (such as `.fsd`), which isn't supported yet.
 
 ### MMFS and DFS
 
 Both MMFS and DFS may be activated at once. However, I am told by the author of MMFS: "It's generally not recommended to have both MMFS and DFS fitted and active at the same time, as they both use they the file system number, so things get very confusing. This is done to maximise compatibility with games that check specifically that DFS is the current file system by testing the file system number."
 
-If you have both active then note that MMFS will treat `*DISC` and `*DISK` commands as belonging to it. You can used `*OPT 5,1` to disable this and have DFS respond to these commands.
+If you have both active then note that MMFS will treat `*DISC` and `*DISK` commands as belonging to it. Type `*OPT 5,1` to disable this, then `*DISC` to switch to the floppy DFS. `*CARD` switches back to MMFS.
 
 If you have both active then for the Master 128 you can choose which to have as default (it will put the right value in the CMOS). On the Model B the highest numbered ROM (MMFS) will be the default.
 
@@ -123,7 +136,7 @@ Other options:
 
 The simulated machines are pretty close to the standard configurations.
 
-The BBC B has an FC1770 Floppy Disk Controller fitted. The mouse is connected to a VIA at the normal User VIA address. There is an extra VIA at the &FEA0 (normally Econet) that is connected to the secondary SD card.
+The BBC B has an Intel 8271 Floppy Disc Controller fitted (DFS 1.2 options), or an FC1770 (DFS 1770 options). The mouse is connected to a VIA at the normal User VIA address. There is an extra VIA at the &FEA0 (normally Econet) that is connected to the secondary SD card.
 
 The Master 128 also has a mouse is connected to a VIA at the normal User VIA address. The SD card is connected to the VIA at &FE80.
 
@@ -135,7 +148,7 @@ In both machines, ROM slots 4-7 contain RAM which can be loaded with additional 
 
 The following ROMs are fitted:
 ```
-Slot  3 - DFS (If active)
+Slot  3 - DFS (If active): DNFS 1.20 (DFS 1.20 + NFS 3.60) with the 8271, or DFS 2.26 with the 1770
 Slot  8 - MMFS (If active)
 Slot 15 - RAM Master v6
 Slot 16 - Basic
@@ -205,9 +218,13 @@ As it was back in the day, interlaced video will judder a little on some display
 - Selecting Drives 2 and 3 in DFS creates some odd results.
 - Saving to tape (`*SAVE` with `*TAPE`) is not supported yet.
 - The ICE version has not been rebuilt on the new framework; only the 2022 ICE builds in `releases/` are available.
+- MiSTer's gamma correction setting has no effect on this core. It was removed to free block RAM for DFS 1.20; with the Beeb's 8 colours it made almost no visible difference.
+- The 8271 doesn't yet support copy-protected disc images (`.fsd`).
 
 
 ## Some Development Notes
+
+The Intel 8271 model was written for this core from the Intel data sheet, using [b-em](https://github.com/stardot/b-em)'s 8271 emulation (Tom Walker and the b-em developers) as the reference for how DFS 1.20 drives it.
 
 Thanks to the excellent work already done by several people, and with the particular help of David Banks/[hoglet67](https://github.com/hoglet67), there weren't a lot of massive issues bringing this together.
 
