@@ -137,7 +137,8 @@ always @(posedge clksys) if ((|sd_rd || |sd_wr) && !sd_ack) begin : sdm
 	sd_d1   = sd_rd[1] | sd_wr[1];
 	xfers = xfers + 1;
 	if (sd_rd[0] & sd_rd[1]) $display("FAIL: both drives requested");
-	repeat (500) @(posedge clksys);
+	// realistic hps_io latency: 0.5-2ms before the block arrives
+	repeat (48000 + ({$random} % 144000)) @(posedge clksys);
 	sd_ack <= 1;
 	for (sd_n = 0; sd_n < 512; sd_n = sd_n + 1) begin
 		@(posedge clksys);
@@ -207,13 +208,33 @@ begin
 end
 endtask
 
+// The 6502 samples NMI once per CPU cycle (at cpu_ce) and acts on a high-to-low change of
+// NMI_n, i.e. a rising edge of nmi seen across two samples. A pulse that drops and rises
+// between samples is invisible to it, as in the T65 in the core.
+reg nmi_s = 0, nmi_edge = 0;
+always @(posedge clk) if (cpu_ce) begin
+	nmi_s <= nmi;
+	if (nmi && !nmi_s) nmi_edge <= 1;
+end
+
 // service NMIs until the command completes: read or write data bytes, then the result
 time t_start;
 task transfer;
 begin
 	ngot = 0;
 	forever begin
-		@(posedge clk); while (!nmi) @(posedge clk);
+		// wait for an NMI the 6502 would see; give up after 1s (a lost NMI)
+		begin : wait_nmi
+			integer w;
+			w = 0;
+			@(posedge clk);
+			while (!nmi_edge && w < 48_000_000) begin @(posedge clk); w = w + 1; end
+			if (!nmi_edge) begin
+				$display("FAIL: NMI lost (status %02x, nmi %0d)", dut.status, nmi);
+				errors = errors + 1; res = 8'hFF; disable transfer;
+			end
+			nmi_edge = 0;
+		end
 		bus_read(0);
 		if (rd[2]) begin
 			if (rd[4]) ; // not expected
@@ -298,6 +319,25 @@ initial begin
 	for (k = 0; k < 768; k = k + 1) if (got[k] !== pat(ssd_off(2, 3) + k)) bad = bad + 1;
 	check(bad == 0, "read data matches image");
 	$display("read 3 sectors: %0d bytes, %0d bad, %0d us", ngot, bad, (t1 - t0) / 1000);
+
+	// ---- 2b. load a long file the way DFS does: whole-track multi-sector reads across
+	//      several tracks (track 6 sectors 4-9, then tracks 7 and 8 complete, then track 9
+	//      sectors 0-2), checking every byte
+	begin : longload
+		integer tr, sc, n, base;
+		for (tr = 6; tr <= 9; tr = tr + 1) begin
+			sc = (tr == 6) ? 4 : 0;
+			n  = (tr == 6) ? 6 : (tr == 9) ? 3 : 10;
+			command(8'h53, 3, tr, sc, 8'h20 | n, 0, 0);
+			ntx = 0; transfer;
+			bad = 0;
+			for (k = 0; k < n * 256; k = k + 1) if (got[k] !== pat(ssd_off(tr, sc) + k)) bad = bad + 1;
+			if (res != 8'h00 || ngot != n * 256 || bad != 0)
+				$display("FAIL: long load track %0d: result %02x, %0d bytes, %0d bad", tr, res, ngot, bad);
+			check(res == 8'h00 && ngot == n * 256 && bad == 0, "long load");
+		end
+		$display("long load (29 sectors over 4 tracks): done");
+	end
 
 	// ---- 3. write drive 0, track 1, sector 9 (odd half of its block); sector 8 must survive
 	ntx = 256;

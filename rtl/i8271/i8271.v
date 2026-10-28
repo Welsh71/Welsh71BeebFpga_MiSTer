@@ -71,6 +71,7 @@ localparam R_NOT_FOUND = 8'h18;
 
 // ------------------------------------------------------------------ timing (4MHz ticks)
 localparam BYTE_TICKS  = 9'd255;      // 64us per byte (FM, 125kbit/s)
+localparam CRC_TICKS   = 10'd511;     // 128us: the two CRC bytes after the last data byte
 localparam MS_TICKS    = 12'd3999;    // 1ms
 localparam REV_TICKS   = 20'd799999;  // 200ms per revolution (300rpm)
 localparam IDX_TICKS   = 20'd16000;   // 4ms index pulse
@@ -163,6 +164,7 @@ localparam S_FMT_FILL  = 5'd18;  // format: read the block holding the sector
 localparam S_SD_START  = 5'd19;  // raise the SD request, then S_SD_WAIT
 localparam S_FMT_PUT   = 5'd20;  // format: fill the sector with &E5
 localparam S_FMT_NEXT  = 5'd21;  // format: next ID
+localparam S_FINISH    = 5'd22;  // CRC time, then result and interrupt
 
 localparam OP_READ   = 3'd0;
 localparam OP_WRITE  = 3'd1;
@@ -189,6 +191,7 @@ reg  [4:0] sd_hold;
 reg        cpu_took;        // CPU has read the data register since the last byte
 reg        cpu_gave;        // CPU has written the data register since the last request
 reg  [3:0] busy_nib;        // 1770-style command nibble for disk_info
+reg  [9:0] fin_tick;
 
 // sector index within the image and its validity
 wire [11:0] trk_base  = dsided[drv] ? ({5'd0, par0[6:0]} * 12'd20) : ({5'd0, par0[6:0]} * 12'd10);
@@ -205,12 +208,16 @@ wire ev   = cpu_ce & cpu_sel;
 wire ev_w = ev & ~cpu_rw;
 wire ev_r = ev &  cpu_rw;
 
+// Completion goes through S_FINISH: a real 8271 reads the two CRC bytes (128us) after
+// the last data byte before it interrupts. That gap also matters to the 6502, which only
+// samples NMI once per cycle: if the interrupt dropped (CPU reads the last byte) and rose
+// again within a cycle, the CPU would never see the edge and the completion NMI would be
+// lost. DFS starts the next track of a multi-track load from that NMI.
 task finish(input [7:0] res);
 begin
-	result     <= res;
-	status     <= 8'h00 | (8'd1 << ST_RESF) | (8'd1 << ST_INT);
-	state      <= S_IDLE;
-	unload_cnt <= (unload_revs == 4'd0 ? 28'd1 : {24'd0, unload_revs}) * (REV_TICKS + 28'd1);
+	result   <= res;
+	fin_tick <= CRC_TICKS;
+	state    <= S_FINISH;
 end
 endtask
 
@@ -495,6 +502,16 @@ always @(posedge clk) begin
 		end
 
 		S_DONE: finish(result);
+
+		S_FINISH:
+			if (ce4m) begin
+				if (fin_tick != 0) fin_tick <= fin_tick - 10'd1;
+				else begin
+					status     <= 8'h00 | (8'd1 << ST_RESF) | (8'd1 << ST_INT);
+					state      <= S_IDLE;
+					unload_cnt <= (unload_revs == 4'd0 ? 28'd1 : {24'd0, unload_revs}) * (REV_TICKS + 28'd1);
+				end
+			end
 
 		// ---- read ID: 4 bytes per ID, one NMI per byte
 		S_ID_TAKEN:
