@@ -17,8 +17,8 @@ module disk_osd
 (
 	input            clk,        // clk_sys
 	input            ce_pix,
-	input            hblank,
-	input            vblank,
+	input            hblank_in,  // from the gated clk_48 domain: registered below
+	input            vblank_in,
 	input      [1:0] mode,
 	input     [23:0] info,       // from fdc1772 (gated clk_48 domain, latched per frame)
 
@@ -33,6 +33,15 @@ localparam MX    = 16;              // distance from the right edge
 localparam MY    = 8;               // distance from the bottom edge
 
 // ---------------------------------------------------------------- counters
+// Blanking comes from the 6845/video ULA in the gated clk_48 domain. Register it once in
+// clk_sys before it reaches the width/height measurement (failed setup at 96MHz when used
+// directly). One clk_sys of delay is a sixth of a 16MHz pixel and is not visible.
+reg        hblank, vblank;
+always @(posedge clk) begin
+	hblank <= hblank_in;
+	vblank <= vblank_in;
+end
+
 reg        ce_d, hb_d, vb_d;
 reg [10:0] x, y, width, height, wmax;
 wire ce_fall = ce_d & ~ce_pix;

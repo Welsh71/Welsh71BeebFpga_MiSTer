@@ -738,8 +738,8 @@ disk_osd disk_osd
 (
 	.clk(clk_sys),
 	.ce_pix(ce_pix),
-	.hblank(HBlank),
-	.vblank(VBlank),
+	.hblank_in(HBlank),
+	.vblank_in(VBlank),
 	.mode(status[33:32]),
 	.info(fdd_info),
 	.r_in(red_vid), .g_in(green_vid), .b_in(blue_vid),

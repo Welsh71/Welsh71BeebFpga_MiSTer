@@ -10,7 +10,7 @@ module tb;
   reg [23:0] info;
   reg [1:0] mode;
   wire [3:0] r,g,b;
-  disk_osd dut(.clk(clk),.ce_pix(ce),.hblank(hb),.vblank(vb),.mode(mode),.info(info),
+  disk_osd dut(.clk(clk),.ce_pix(ce),.hblank_in(hb),.vblank_in(vb),.mode(mode),.info(info),
                .r_in(4'h3),.g_in(4'h3),.b_in(4'h3),.r_out(r),.g_out(g),.b_out(b));
   // advance the raster on the rising edge of ce (like the core)
   reg ce_d=0;
