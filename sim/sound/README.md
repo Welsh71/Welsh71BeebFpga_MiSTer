@@ -20,5 +20,5 @@ Run (OSS CVC; takes several minutes):
     cvc64 tb_drive_sound.v ../../rtl/drive_sound.v ../../rtl/tape/tape_store.v ../../rtl/tape/tape_ddr.v ../../rtl/tape/inflate.v
     ./cvcsim
 
-The testbench clock is 17.64 MHz (400 clocks per 44.1 kHz sample) to shorten the
+The testbench clock is 7.056 MHz (160 clocks per 44.1 kHz sample) to shorten the
 run; all of drive_sound's timings scale with CLK_HZ.

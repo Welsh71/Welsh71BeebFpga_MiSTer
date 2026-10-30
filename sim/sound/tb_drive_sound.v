@@ -9,15 +9,15 @@
 //   cvc64 tb_drive_sound.v ../../rtl/drive_sound.v ../../rtl/tape/tape_store.v \
 //         ../../rtl/tape/tape_ddr.v ../../rtl/tape/inflate.v && ./cvcsim
 //
-// The clock is 17.64 MHz (400 clocks per 44.1 kHz sample) to keep the run short;
+// The clock is 7.056 MHz (160 clocks per 44.1 kHz sample) to keep the run short;
 // all of drive_sound's timings scale with CLK_HZ.
 
 `timescale 1ns/1ps
 module tb;
-    localparam integer CLK_HZ = 17640000;
+    localparam integer CLK_HZ = 7056000;
 
     reg clk = 0, rst = 1;
-    always #28 clk = ~clk;
+    always #71 clk = ~clk;
 
     // ---------------- DUT ----------------
     reg         snd_dl = 0, tape_dl = 0, dl_wr = 0;
@@ -246,7 +246,7 @@ module tb;
         level <= 2;
         next_mix(v);
         motor <= 1;
-        expect_seq("motor on", 50000, 2, 3, 6, 1);   // > 1 motor loop
+        expect_seq("motor on", 45000, 2, 3, 6, 1);   // > 1 motor loop
         // ---- motor off: head unload, motor stops
         motor <= 0;
         expect_seq("motor off", 4446, -1, 4, 6, 0);

@@ -75,12 +75,13 @@ module drive_sound #(
                 default: ;
             endcase
             for (k = 0; k < 7; k = k + 1) begin
-                if (dl_addr[5:0] == 8 + 8*k)     off[k][7:0]  <= dl_data;
-                if (dl_addr[5:0] == 8 + 8*k + 1) off[k][15:8] <= dl_data;
-                if (dl_addr[5:0] == 8 + 8*k + 2) off[k][16]   <= dl_data[0];
-                if (dl_addr[5:0] == 8 + 8*k + 4) len[k][7:0]  <= dl_data;
-                if (dl_addr[5:0] == 8 + 8*k + 5) len[k][15:8] <= dl_data;
-                if (dl_addr[5:0] == 8 + 8*k + 6) len[k][16]   <= dl_data[0];
+                // whole-word writes (part-selects of array words are not portable)
+                if (dl_addr[5:0] == 8 + 8*k)     off[k] <= {off[k][16:8], dl_data};
+                if (dl_addr[5:0] == 8 + 8*k + 1) off[k] <= {off[k][16], dl_data, off[k][7:0]};
+                if (dl_addr[5:0] == 8 + 8*k + 2) off[k] <= {dl_data[0], off[k][15:0]};
+                if (dl_addr[5:0] == 8 + 8*k + 4) len[k] <= {len[k][16:8], dl_data};
+                if (dl_addr[5:0] == 8 + 8*k + 5) len[k] <= {len[k][16], dl_data, len[k][7:0]};
+                if (dl_addr[5:0] == 8 + 8*k + 6) len[k] <= {dl_data[0], len[k][15:0]};
             end
         end
     end
@@ -160,7 +161,7 @@ module drive_sound #(
     wire signed [8:0] s = $signed({1'b0, mem_data}) - 9'sd128;
     // drive voices follow the level setting; relay clicks are fixed at medium
     wire  [2:0] sh = (v < 3'd2) ? 3'd6 : (level == 2'd1) ? 3'd5 : (level == 2'd2) ? 3'd6 : 3'd7;
-    wire signed [17:0] s_scaled = $signed({{9{s[8]}}, s}) <<< sh;
+    wire signed [17:0] s_scaled = $signed({{9{s[8]}}, s}) << sh;   // << rather than <<<: same result, no tool quirks
 
     integer i;
     always @(posedge clk) begin
