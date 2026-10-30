@@ -149,7 +149,6 @@ parameter CONF_STR = {
 	"TN,Eject Tape;",
 	"OK,Tape Input,File,ADC;",
 	"OLM,Tape Sound,Low,Medium,Loud,Off;",
-	"o7,Tape Relay Click,Off,On;",
 	"-;",
 	"FC2,ROM,Load Drive Sounds;",
 	"o56,Drive Sounds,Off,Low,Medium,Loud;",
@@ -803,7 +802,7 @@ drive_sound #(.CLK_HZ(96000000)) drive_sound
 	.clk(clk_sys),
 	.rst(RESET),
 	.level(status[38:37]),
-	.relay_en(status[39]),
+	.relay_en(1'b0),          // relay click removed from the menu (status bit 39 now unused)
 	.motor(ds_motor_s[1]),
 	.step(ds_step_s[1]),
 	.seek_tog(ds_seek_s[1]),
