@@ -344,7 +344,17 @@ reg  [7:0] rom_data;
 (* ram_init_file = "roms/dnfs.mif" *) reg [7:0] dnfs_rom[16384];
 // ROM is only written while reset is held (ioctl download), so the write port uses ioctl_addr alone.
 // Muxing rom_addr in here tied ext_A to every ROM block's write enable and failed timing.
-always @(posedge clk_sys) if(!ioctl_index && ioctl_wr && reset) rom[ioctl_addr[17:0]] <= ioctl_dout;
+// The write is registered once first: ioctl_dout drives many loads in hps_io's
+// neighbourhood and failed to reach the far ROM blocks in one cycle.
+reg        rom_we;
+reg [17:0] rom_wa;
+(* maxfan = 24 *) reg [7:0] rom_wd;
+always @(posedge clk_sys) begin
+	rom_we <= !ioctl_index && ioctl_wr && reset;
+	rom_wa <= ioctl_addr[17:0];
+	rom_wd <= ioctl_dout;
+end
+always @(posedge clk_sys) if(rom_we) rom[rom_wa] <= rom_wd;
 // Read address registered in clk_sys: ext_A changes on gated clk_48 and fans out to ~250
 // ROM blocks through the rom_addr lookup. A memory slot lasts 12 clk_sys and data is
 // latched at its end, so the extra cycle of read latency is safe.

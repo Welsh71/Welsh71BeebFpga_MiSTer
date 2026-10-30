@@ -42,12 +42,16 @@ always @(posedge clk) begin
 	vblank <= vblank_in;
 end
 
-reg        ce_d, hb_d, vb_d;
+// ce_pix is combinational from the gated clk_48 domain (it follows the Mode 7 pixel
+// clock choice): register it too, so it lines up with hblank/vblank above. Overlay
+// pixels are then ready 4 clk_sys after ce_pix falls, still inside a 6-clk pixel.
+reg        ce_r, ce_d, hb_d, vb_d;
 reg [10:0] x, y, width, height, wmax;
-wire ce_fall = ce_d & ~ce_pix;
+wire ce_fall = ce_d & ~ce_r;
 
 always @(posedge clk) begin
-	ce_d <= ce_pix;
+	ce_r <= ce_pix;
+	ce_d <= ce_r;
 	if(ce_fall) begin
 		hb_d <= hblank;
 		vb_d <= vblank;
