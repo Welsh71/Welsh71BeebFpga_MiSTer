@@ -25,21 +25,30 @@ architecture Behavioral of quadrature_controller is
 
 signal flg: std_logic;
 signal ms_valid: std_logic;
+signal ms_s: std_logic_vector(24 downto 0);   -- ps2_mouse captured from clk_sys
+signal tog1, tog2: std_logic;
 
 
 begin
 
-	ms_valid <= '1' when flg /= ps2_mouse(24) else '0';
+	-- ps2_mouse comes from hps_io in clk_sys; clk is the gated clk_48, whose clock
+	-- arrives ~6.7 ns late, so comparing flg with the live toggle could miss an event.
+	-- Capture the whole word, then detect the toggle two clocks later, when every
+	-- data bit has settled (as in mister_keyboard.vhd).
+	ms_valid <= '1' when flg /= tog2 else '0';
 	process(clk) begin
 		if rising_edge(clk) then
-			flg <= ps2_mouse(24);
+			ms_s <= ps2_mouse;
+			tog1 <= ms_s(24);
+			tog2 <= tog1;
+			flg  <= tog2;
 		end if;
 	end process;
 
     -- Instantiate seperate instances of the quadrature encoder state machine
     -- for X and Y directions
-    quad_x_fsm: entity work.quadrature_fsm port map (clk, rst, ms_valid, ps2_mouse(15 downto 8),  ps2_mouse(4), x_a, x_b);
-    quad_y_fsm: entity work.quadrature_fsm port map (clk, rst, ms_valid, ps2_mouse(23 downto 16), ps2_mouse(5), y_a, y_b);
+    quad_x_fsm: entity work.quadrature_fsm port map (clk, rst, ms_valid, ms_s(15 downto 8),  ms_s(4), x_a, x_b);
+    quad_y_fsm: entity work.quadrature_fsm port map (clk, rst, ms_valid, ms_s(23 downto 16), ms_s(5), y_a, y_b);
               
     manage_fsm: process(clk,rst)
     begin
@@ -49,9 +58,9 @@ begin
             right  <= '0';
         elsif (rising_edge(clk)) then
             if ms_valid = '1' then
-					left   <= ps2_mouse(0);
-					middle <= ps2_mouse(2);
-					right  <= ps2_mouse(1);
+					left   <= ms_s(0);
+					middle <= ms_s(2);
+					right  <= ms_s(1);
 				end if;
         end if;
     end process manage_fsm;

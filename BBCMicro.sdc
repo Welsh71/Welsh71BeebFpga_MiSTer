@@ -52,6 +52,17 @@ set_multicycle_path -to [get_keepers {emu|sdclk_r emu|sdmosi_r emu|sdss_r}] -hol
 # On-screen disk status: floppy state (gated clk_48) is latched once per frame,
 # display only.
 set_false_path -to [get_keepers {emu|disk_osd|inf[*] emu|disk_osd|led}]
+# Blanking into disk_osd comes from the gated clk_48 (ticks every other clk_sys edge).
+set_multicycle_path -to [get_keepers {emu|disk_osd|hblank emu|disk_osd|vblank}] -setup 2
+set_multicycle_path -to [get_keepers {emu|disk_osd|hblank emu|disk_osd|vblank}] -hold 1
+
+# Keyboard and mouse: hps_io's ps2_key/ps2_mouse (clk_sys) are captured on the gated
+# clk_48, whose clock arrives late enough that a bit may be caught a clock early. The
+# event is detected two clocks after the capture, so that is harmless (see
+# mister_keyboard.vhd, sim/keyb). Only the hold check is removed: setup stays bounded
+# by the two-cycle rule on emu|BBCMicro|* above.
+set_false_path -hold -to [get_keepers {emu|BBCMicro|keyb|key_s[*]}]
+set_false_path -hold -to [get_keepers {emu|BBCMicro|mouse_controller|ms_s[*]}]
 # inf is static for a whole frame; the track/sector digits (/10, %10) and the command
 # decode that follow it may take several clocks.
 set_multicycle_path -from [get_keepers {emu|disk_osd|inf[*]}] -setup 4

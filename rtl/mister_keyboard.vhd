@@ -77,6 +77,8 @@ architecture rtl of misterkeyboard is
 signal keyb_data	:	std_logic_vector(7 downto 0);
 signal keyb_valid	:	std_logic;
 signal flg			:	std_logic;
+signal key_s		:	std_logic_vector(10 downto 0);	-- MISTER_KEY captured from clk_sys
+signal tog1, tog2	:	std_logic;
 signal ext_key    :  std_logic;
 
 -- Internal signals
@@ -127,13 +129,21 @@ begin
 		end if;
 	end process;
 	
-	keyb_data <= MISTER_KEY(7 downto 0);
-	ext_key <= MISTER_KEY(8);
-	press <= MISTER_KEY(9);
-	keyb_valid <= '1' when flg /= MISTER_KEY(10) else '0';
+	-- MISTER_KEY comes from hps_io in clk_sys; this runs on the gated clk_48, whose clock
+	-- arrives ~6.7 ns late. Comparing flg with the live toggle could miss a key event if
+	-- flg caught the new toggle on the edge it arrived. Capture the whole word, then
+	-- detect the toggle two clocks further on: by then every data bit has settled
+	-- (hps_io changes them together with the toggle and holds them until the next event).
+	keyb_data <= key_s(7 downto 0);
+	ext_key <= key_s(8);
+	press <= key_s(9);
+	keyb_valid <= '1' when flg /= tog2 else '0';
 	process(CLOCK) begin
 		if rising_edge(CLOCK) then
-			flg <= MISTER_KEY(10);
+			key_s <= MISTER_KEY;
+			tog1  <= key_s(10);
+			tog2  <= tog1;
+			flg   <= tog2;
 		end if;
 	end process;
 
