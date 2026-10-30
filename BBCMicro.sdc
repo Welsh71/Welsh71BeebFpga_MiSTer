@@ -62,7 +62,8 @@ set_multicycle_path -to [get_keepers {emu|disk_osd|hblank emu|disk_osd|vblank}] 
 # mister_keyboard.vhd, sim/keyb). Only the hold check is removed: setup stays bounded
 # by the two-cycle rule on emu|BBCMicro|* above.
 set_false_path -hold -to [get_keepers {emu|BBCMicro|keyb|key_s[*]}]
-set_false_path -hold -to [get_keepers {emu|BBCMicro|mouse_controller|ms_s[*]}]
+# (the mouse controller sits in the GenMouse generate block: \GenMouse:mouse_controller)
+set_false_path -hold -to [get_keepers {emu|BBCMicro|*mouse_controller|ms_s[*]}]
 # inf is static for a whole frame; the track/sector digits (/10, %10) and the command
 # decode that follow it may take several clocks.
 set_multicycle_path -from [get_keepers {emu|disk_osd|inf[*]}] -setup 4
