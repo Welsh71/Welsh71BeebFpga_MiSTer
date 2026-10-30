@@ -820,8 +820,17 @@ wire signed [16:0] tape_amp = (status[22:21] == 2'd0) ? 17'sd1024 :     // Low
                               (status[22:21] == 2'd1) ? 17'sd2048 :     // Medium
                                                         17'sd6144;      // Loud
 wire signed [16:0] tape_snd = !tape_snd_on ? 17'sd0 : tape_snd_s[1] ? tape_amp : -tape_amp;
-wire signed [18:0] mix_l = $signed({{3{core_audio_l[15]}}, core_audio_l}) + tape_snd + drive_snd;
-wire signed [18:0] mix_r = $signed({{3{core_audio_r[15]}}, core_audio_r}) + tape_snd + drive_snd;
+// Core audio comes from the gated clk_48 domain (SN76489 and Music 5000 sums are
+// combinational after their registers), whose clock tree adds ~6 ns of skew against
+// clk_sys. Capture it in its own clk_sys register first (two-cycle path in the SDC:
+// clk_48 only ticks on every other clk_sys edge), then mix from registers.
+reg  [15:0] core_l_q, core_r_q;
+always @(posedge clk_sys) begin
+	core_l_q <= core_audio_l;
+	core_r_q <= core_audio_r;
+end
+wire signed [18:0] mix_l = $signed({{3{core_l_q[15]}}, core_l_q}) + tape_snd + drive_snd;
+wire signed [18:0] mix_r = $signed({{3{core_r_q[15]}}, core_r_q}) + tape_snd + drive_snd;
 wire               sat_l = (mix_l[18:15] != 4'b0000) && (mix_l[18:15] != 4'b1111);
 wire               sat_r = (mix_r[18:15] != 4'b0000) && (mix_r[18:15] != 4'b1111);
 // registered so the extra adder and saturation stay off the paths into sys/audio_out

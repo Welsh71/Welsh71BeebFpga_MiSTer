@@ -52,3 +52,8 @@ set_multicycle_path -to [get_keepers {emu|sdclk_r emu|sdmosi_r emu|sdss_r}] -hol
 # On-screen disk status: floppy state (gated clk_48) is latched once per frame,
 # display only.
 set_false_path -to [get_keepers {emu|disk_osd|inf[*] emu|disk_osd|led}]
+
+# Core audio (SN76489/Music 5000, gated clk_48) captured in clk_sys before the
+# drive/tape sound mix. clk_48 ticks on every other clk_sys edge.
+set_multicycle_path -to [get_keepers {emu|core_l_q[*] emu|core_r_q[*]}] -setup 2
+set_multicycle_path -to [get_keepers {emu|core_l_q[*] emu|core_r_q[*]}] -hold 1
