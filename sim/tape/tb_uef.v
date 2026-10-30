@@ -68,6 +68,7 @@ module tb_uef;
     tape_store #(.STAGE(25'h100000)) tstore (
         .clk(clk), .rst(rst), .eject(eject),
         .dl_active(dl_active), .dl_wr(dl_wr), .dl_addr(dl_addr), .dl_data(dl_data), .dl_wait(dl_wait),
+        .snd_active(1'b0), .s_rd(1'b0), .s_addr(17'd0), .s_data(), .s_valid(),
         .p_rd(p_rd), .p_addr(p_addr), .p_data(p_data), .p_valid(p_valid),
         .size(st_size), .inflating(st_inflating), .inflate_err(st_err),
         .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),

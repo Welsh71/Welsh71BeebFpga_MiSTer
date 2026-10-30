@@ -815,7 +815,7 @@ drive_sound #(.CLK_HZ(96000000)) drive_sound
 // mixed in at a modest level while the motor is on.
 reg  [1:0]  tape_snd_s;
 always @(posedge clk_sys) tape_snd_s <= {tape_snd_s[0], (tape_in_sel | (tape_out & tape_out_en))};
-wire        tape_snd_on = (status[22:21] != 2'd3) & tape_motor;
+wire        tape_snd_on = (status[22:21] != 2'd3) & ds_relay_s[1];   // tape_motor synced into clk_sys
 wire signed [16:0] tape_amp = (status[22:21] == 2'd0) ? 17'sd1024 :     // Low
                               (status[22:21] == 2'd1) ? 17'sd2048 :     // Medium
                                                         17'sd6144;      // Loud

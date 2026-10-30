@@ -195,12 +195,15 @@ module inflate (
     always @(posedge clk)
         len_at <= (tsel == T_C) ? clens[lidx[4:0]] : lens[lidx];
 
+    // Huffman count for the current code length, registered for timing: valid one
+    // clk after dlen/tsel change, so S_DEC waits a clk (dwait) after each change.
     reg  [8:0]  cnt_at;
-    always @(*) begin
+    reg         dwait;
+    always @(posedge clk) begin
         case (tsel)
-            T_C:     cnt_at = cntC[dlen];
-            T_D:     cnt_at = cntD[dlen];
-            default: cnt_at = cntL[dlen];
+            T_C:     cnt_at <= cntC[dlen];
+            T_D:     cnt_at <= cntD[dlen];
+            default: cnt_at <= cntL[dlen];
         endcase
     end
 
@@ -235,7 +238,7 @@ module inflate (
         cons    = 6'd0;
 
         if (rst) begin
-            st <= S_IDLE; busy <= 1'b0; err <= 1'b0; ipend <= 1'b0;
+            st <= S_IDLE; busy <= 1'b0; err <= 1'b0; ipend <= 1'b0; dwait <= 1'b0;
         end else begin
             case (st)
             // ---------------- start ----------------
@@ -365,7 +368,7 @@ module inflate (
                         tsel <= T_L; bn <= hlit; bret <= S_AFTER_L; st <= S_B_CLR;
                     end
                 end else begin
-                    tsel <= T_C; dret <= S_DYN_RX; st <= S_DEC;
+                    tsel <= T_C; dret <= S_DYN_RX; st <= S_DEC; dwait <= 1'b1;
                     code <= 16'd0; first <= 16'd0; index <= 16'd0; dlen <= 4'd1;
                 end
             S_DYN_RX:                       // dsym = code-length symbol
@@ -463,7 +466,9 @@ module inflate (
 
             // ---------------- Huffman decode (one bit per clk) ----------------
             S_DEC:
-                if (bc >= 6'd1) begin
+                if (dwait)
+                    dwait <= 1'b0;
+                else if (bc >= 6'd1) begin
                     cons = 6'd1;
                     if (cdiff < {7'd0, cnt_at}) begin
                         sym_idx <= index[8:0] + cdiff[8:0];
@@ -475,6 +480,7 @@ module inflate (
                         first <= (first + {7'd0, cnt_at}) << 1;
                         code  <= ncode << 1;
                         dlen  <= dlen + 4'd1;
+                        dwait <= 1'b1;
                     end
                 end
             S_DEC_SYM: begin
@@ -488,7 +494,7 @@ module inflate (
 
             // ---------------- symbols ----------------
             S_SYM: begin
-                tsel <= T_L; dret <= S_LEN_X; st <= S_DEC;
+                tsel <= T_L; dret <= S_LEN_X; st <= S_DEC; dwait <= 1'b1;
                 code <= 16'd0; first <= 16'd0; index <= 16'd0; dlen <= 4'd1;
             end
             S_LEN_X:                        // dsym = literal/length symbol
@@ -504,7 +510,7 @@ module inflate (
                         cons = {3'd0, len_extra(dsym[4:0] - 5'd1)};
                         mlen <= len_base(dsym[4:0] - 5'd1) +
                                 (bb[8:0] & ((9'd1 << len_extra(dsym[4:0] - 5'd1)) - 9'd1));
-                        tsel <= T_D; dret <= S_DIST; st <= S_DEC;
+                        tsel <= T_D; dret <= S_DIST; st <= S_DEC; dwait <= 1'b1;
                         code <= 16'd0; first <= 16'd0; index <= 16'd0; dlen <= 4'd1;
                     end
                 end
@@ -585,7 +591,7 @@ module inflate (
             // ---------------- truncated input ----------------
             // A state that reads bits but consumed none while the input is
             // exhausted can never continue: report an error instead of hanging.
-            if (busy && cons == 6'd0 && ipos >= iend && !ipend && !in_rd &&
+            if (busy && cons == 6'd0 && ipos >= iend && !ipend && !in_rd && !(st == S_DEC && dwait) &&
                 (st == S_GZ || st == S_GZ_XLEN || st == S_GZ_SKIP || st == S_GZ_STR ||
                  st == S_GZ_HCRC || st == S_BLK || st == S_ST_LEN || st == S_ST_COPY ||
                  st == S_DYN || st == S_DYN_CL || st == S_DYN_RX || st == S_DEC ||

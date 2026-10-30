@@ -55,5 +55,11 @@ set_false_path -to [get_keepers {emu|disk_osd|inf[*] emu|disk_osd|led}]
 
 # Core audio (SN76489/Music 5000, gated clk_48) captured in clk_sys before the
 # drive/tape sound mix. clk_48 ticks on every other clk_sys edge.
-set_multicycle_path -to [get_keepers {emu|core_l_q[*] emu|core_r_q[*]}] -setup 2
-set_multicycle_path -to [get_keepers {emu|core_l_q[*] emu|core_r_q[*]}] -hold 1
+# (core_?_q* also matches the copies Quartus makes when it retimes them, e.g. _OTERM)
+set_multicycle_path -to [get_keepers {emu|core_l_q* emu|core_r_q*}] -setup 2
+set_multicycle_path -to [get_keepers {emu|core_l_q* emu|core_r_q*}] -hold 1
+
+# ROM read address: rom_addr_r follows ext_A (gated clk_48), so it changes at most on
+# every other clk_sys edge, and the data is latched at the end of a 12-clk memory slot.
+set_multicycle_path -from [get_keepers {emu|rom_addr_r*}] -setup 2
+set_multicycle_path -from [get_keepers {emu|rom_addr_r*}] -hold 1
