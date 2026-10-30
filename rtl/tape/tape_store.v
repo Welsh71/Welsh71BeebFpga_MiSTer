@@ -10,9 +10,14 @@
 // size is 0 while downloading or decompressing, then the playable length;
 // the player starts when it becomes non-zero. eject forgets the image (size 0,
 // and a decompression still running is ignored) until the next download.
+//
+// The drive sounds file (sounds.rom, menu index 2) is stored at SND_BASE, the top
+// 128KB of the window, and read back through s_*. A tape image is limited to
+// SND_BASE - STAGE bytes (just under 16MB) so the two never overlap.
 
 module tape_store #(
-    parameter [24:0] STAGE = 25'h1000000
+    parameter [24:0] STAGE    = 25'h1000000,
+    parameter [24:0] SND_BASE = 25'h1FE0000
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -24,6 +29,13 @@ module tape_store #(
     input  wire [24:0] dl_addr,
     input  wire  [7:0] dl_data,
     output wire        dl_wait,
+
+    // drive sounds download (same dl_wr/dl_addr/dl_data) and reads
+    input  wire        snd_active,
+    input  wire        s_rd,
+    input  wire [16:0] s_addr,
+    output wire  [7:0] s_data,
+    output wire        s_valid,
 
     // player
     input  wire        p_rd,
@@ -109,11 +121,13 @@ module tape_store #(
 
     tape_ddr ddr (
         .clk(clk), .rst(rst),
-        .w0_wr(dl_wr & dl_active), .w0_addr(STAGE + dl_addr), .w0_data(dl_data), .w0_busy(dl_wait),
+        .w0_wr(dl_wr & ((dl_active & (dl_addr < SND_BASE - STAGE)) | (snd_active & (dl_addr < 25'h20000)))),
+        .w0_addr(snd_active ? SND_BASE + dl_addr : STAGE + dl_addr), .w0_data(dl_data), .w0_busy(dl_wait),
         .w1_wr(o_wr), .w1_wa(o_wa), .w1_data(o_wd), .w1_be(o_be), .w1_busy(o_busy),
         .r0_rd(p_rd), .r0_addr(base + p_addr), .r0_data(p_data), .r0_valid(p_valid),
         .r1_rd(i_rd), .r1_addr(i_addr), .r1_data(i_data), .r1_valid(i_valid),
         .r2_rd(w_rd), .r2_addr(w_addr), .r2_data(w_data), .r2_valid(w_valid),
+        .r3_rd(s_rd), .r3_addr(SND_BASE + {8'd0, s_addr}), .r3_data(s_data), .r3_valid(s_valid),
         .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
         .DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD),
         .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE));

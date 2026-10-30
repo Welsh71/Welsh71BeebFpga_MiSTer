@@ -54,6 +54,8 @@ module i8271
 
 	// Front panel
 	output            drive_led,
+	output reg        seek_tog,    // drive sounds: changes once per head movement
+	output reg  [6:0] seek_n,      //   tracks moved by it
 	output     [23:0] disk_info    // same layout as fdc1772.v, for disk_osd.v
 );
 
@@ -113,6 +115,7 @@ wire       drv       = drvout[7];          // drive 1 when select 1 is active
 wire       side      = drvout[5];
 wire [6:0] phys      = drv ? phys1 : phys0;
 wire [7:0] curtrk    = drv ? curtrk1 : curtrk0;
+wire [6:0] new_phys  = (par0 > 8'd81) ? 7'd81 : par0[6:0];
 
 assign nmi = status[ST_INT];
 
@@ -344,6 +347,10 @@ always @(posedge clk) begin
 				id_sector  <= rot_sector;
 				motor      <= 1'b1;
 				// seek: update the track register and the head position
+				if (new_phys != phys) begin
+					seek_n   <= (new_phys > phys) ? new_phys - phys : phys - new_phys;
+					seek_tog <= ~seek_tog;
+				end
 				if (drv) begin curtrk1 <= par0; phys1 <= (par0 > 8'd81) ? 7'd81 : par0[6:0]; end
 				else     begin curtrk0 <= par0; phys0 <= (par0 > 8'd81) ? 7'd81 : par0[6:0]; end
 				delay_ms   <= seek_ms;
@@ -610,6 +617,8 @@ always @(posedge clk) begin
 		drvout      <= 8'h00;
 		phys0       <= 7'd0;
 		phys1       <= 7'd0;
+		seek_tog    <= 1'b0;
+		seek_n      <= 7'd0;
 		motor       <= 1'b0;
 		rev         <= 20'd0;
 		unload_cnt  <= 28'd0;

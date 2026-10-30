@@ -10,6 +10,8 @@
 //   r0  byte reads           - tape player
 //   r1  byte reads           - decompressor input
 //   r2  byte reads           - decompressor history window
+//   r3  byte reads           - drive sounds (drive_sound.v); served first of the
+//                              reads, as it has to keep up with 44.1 kHz
 // Each read port has its own one-word cache, so sequential reading costs one
 // DDR3 access per eight bytes. Every write updates any cache holding that
 // word, so readers never see stale data. Writes are served before reads.
@@ -44,6 +46,11 @@ module tape_ddr (
     output reg   [7:0] r2_data,
     output reg         r2_valid,
 
+    input  wire        r3_rd,
+    input  wire [24:0] r3_addr,
+    output reg   [7:0] r3_data,
+    output reg         r3_valid,
+
     // DDRAM
     input  wire        DDRAM_BUSY,
     output wire  [7:0] DDRAM_BURSTCNT,
@@ -69,12 +76,12 @@ module tape_ddr (
     reg  [63:0] d1w;
     reg  [7:0]  b1w;
 
-    reg  [2:0]  pr;                 // pending reads
-    reg  [24:0] ra0, ra1, ra2;
+    reg  [3:0]  pr;                 // pending reads
+    reg  [24:0] ra0, ra1, ra2, ra3;
 
-    reg  [63:0] c0, c1, c2;
-    reg  [21:0] t0, t1, t2;
-    reg  [2:0]  cok;
+    reg  [63:0] c0, c1, c2, c3;
+    reg  [21:0] t0, t1, t2, t3;
+    reg  [3:0]  cok;
 
     assign DDRAM_BURSTCNT = 8'd1;
     assign DDRAM_ADDR     = {4'b0011, 3'b000, word_addr};
@@ -96,20 +103,23 @@ module tape_ddr (
     wire hit0 = cok[0] && t0 == ra0[24:3];
     wire hit1 = cok[1] && t1 == ra1[24:3];
     wire hit2 = cok[2] && t2 == ra2[24:3];
+    wire hit3 = cok[3] && t3 == ra3[24:3];
 
     always @(posedge clk) begin
         r0_valid <= 1'b0;
         r1_valid <= 1'b0;
         r2_valid <= 1'b0;
+        r3_valid <= 1'b0;
         if (rst) begin
             state <= S_IDLE; DDRAM_RD <= 1'b0; DDRAM_WE <= 1'b0;
-            p0w <= 1'b0; p1w <= 1'b0; pr <= 3'd0; cok <= 3'd0;
+            p0w <= 1'b0; p1w <= 1'b0; pr <= 4'd0; cok <= 4'd0;
         end else begin
             if (w0_wr) begin p0w <= 1'b1; a0w <= w0_addr; d0w <= w0_data; end
             if (w1_wr) begin p1w <= 1'b1; a1w <= w1_wa; d1w <= w1_data; b1w <= w1_be; end
             if (r0_rd) begin pr[0] <= 1'b1; ra0 <= r0_addr; end
             if (r1_rd) begin pr[1] <= 1'b1; ra1 <= r1_addr; end
             if (r2_rd) begin pr[2] <= 1'b1; ra2 <= r2_addr; end
+            if (r3_rd) begin pr[3] <= 1'b1; ra3 <= r3_addr; end
 
             case (state)
             S_IDLE:
@@ -123,6 +133,7 @@ module tape_ddr (
                         if (cok[0] && t0 == a0w[24:3]) c0 <= merge(c0, {8{d0w}}, 8'd1 << a0w[2:0]);
                         if (cok[1] && t1 == a0w[24:3]) c1 <= merge(c1, {8{d0w}}, 8'd1 << a0w[2:0]);
                         if (cok[2] && t2 == a0w[24:3]) c2 <= merge(c2, {8{d0w}}, 8'd1 << a0w[2:0]);
+                        if (cok[3] && t3 == a0w[24:3]) c3 <= merge(c3, {8{d0w}}, 8'd1 << a0w[2:0]);
                     end else begin
                         p1w       <= 1'b0;
                         word_addr <= a1w;
@@ -131,9 +142,16 @@ module tape_ddr (
                         if (cok[0] && t0 == a1w) c0 <= merge(c0, d1w, b1w);
                         if (cok[1] && t1 == a1w) c1 <= merge(c1, d1w, b1w);
                         if (cok[2] && t2 == a1w) c2 <= merge(c2, d1w, b1w);
+                        if (cok[3] && t3 == a1w) c3 <= merge(c3, d1w, b1w);
                     end
                     DDRAM_WE <= 1'b1;
                     state    <= S_WRITE;
+                end else if (pr[3]) begin
+                    if (hit3) begin
+                        pr[3] <= 1'b0; r3_data <= c3[ra3[2:0]*8 +: 8]; r3_valid <= 1'b1;
+                    end else begin
+                        word_addr <= ra3[24:3]; fill <= 2'd3; DDRAM_RD <= 1'b1; state <= S_READ;
+                    end
                 end else if (pr[2]) begin
                     if (hit2) begin
                         pr[2] <= 1'b0; r2_data <= c2[ra2[2:0]*8 +: 8]; r2_valid <= 1'b1;
@@ -168,7 +186,8 @@ module tape_ddr (
                     case (fill)
                         2'd0: begin c0 <= DDRAM_DOUT; t0 <= word_addr; end
                         2'd1: begin c1 <= DDRAM_DOUT; t1 <= word_addr; end
-                        default: begin c2 <= DDRAM_DOUT; t2 <= word_addr; end
+                        2'd2: begin c2 <= DDRAM_DOUT; t2 <= word_addr; end
+                        default: begin c3 <= DDRAM_DOUT; t3 <= word_addr; end
                     endcase
                     cok[fill] <= 1'b1;
                     state <= S_IDLE;            // the pending read now hits

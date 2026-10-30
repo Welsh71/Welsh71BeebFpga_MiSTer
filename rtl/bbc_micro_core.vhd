@@ -244,6 +244,10 @@ entity bbc_micro_core is
         -- Floppy drive activity LED (1770 motor on, drive selected)
         floppy_led     : out   std_logic;
         floppy_info    : out   std_logic_vector(23 downto 0);  -- for the on-screen disk status
+        -- Drive sounds (drive_sound.v): 1770 step pulses, 8271 seeks (toggle + tracks)
+        floppy_step    : out   std_logic;
+        floppy_seek    : out   std_logic;
+        floppy_seek_n  : out   std_logic_vector(6 downto 0);
 
         -- Test outputs
         test           : out   std_logic_vector(7 downto 0) -- IES New
@@ -345,6 +349,8 @@ component i8271 is
 		buf_we           : out std_logic;
 		buf_q            : in  std_logic_vector( 7 downto 0);
 		drive_led        : out std_logic;
+		seek_tog         : out std_logic;
+		seek_n           : out std_logic_vector(6 downto 0);
 		disk_info        : out std_logic_vector(23 downto 0)
 	);
 end component ;
@@ -763,6 +769,8 @@ signal i8271_enable     : std_logic;   -- 0xFE80-0xFE9F
 signal i8271_do         : std_logic_vector(7 downto 0);
 signal i8271_nmi        : std_logic;
 signal i8271_led        : std_logic;
+signal i8271_seek       : std_logic;
+signal fdc_step         : std_logic;
 signal i8271_info       : std_logic_vector(23 downto 0);
 signal x_drive          : std_logic;
 signal x_lba            : std_logic_vector(31 downto 0);
@@ -2210,6 +2218,7 @@ begin
 		floppy_motor => not floppy_motor,
 		floppy_side =>  floppy_side,
 		floppy_reset => floppy_reset,
+		floppy_step => fdc_step,
 		drive_led => fdc_led,
 		disk_info => fdc_info,
 
@@ -2251,11 +2260,15 @@ begin
 		buf_we      => x_we,
 		buf_q       => x_q,
 		drive_led   => i8271_led,
+		seek_tog    => i8271_seek,
+		seek_n      => floppy_seek_n,
 		disk_info   => i8271_info
 	);
 
 	floppy_led  <= i8271_led  when i8271_active = '1' else fdc_led;
 	floppy_info <= i8271_info when i8271_active = '1' else fdc_info;
+	floppy_step <= fdc_step and not i8271_active;
+	floppy_seek <= i8271_seek;
 
 
 -- From MAME:

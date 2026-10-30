@@ -43,6 +43,15 @@ wire [1:0] tape_fmt;
 reg  [7:0] tape_info;
 wire tape_playing, tape_out, tape_out_en, tape_err, tape_inflating;
 wire [15:0] core_audio_l, core_audio_r;
+// Drive sounds (drive_sound below)
+wire        fdd_step, fdd_seek;
+wire  [6:0] fdd_seek_n;
+wire        snd_dl;
+wire        snd_rd, snd_rvalid, sounds_loaded;
+wire [16:0] snd_raddr;
+wire  [7:0] snd_rdata;
+reg   [3:0] snd_msg;              // "Not a drive sounds file", after a sounds download
+reg   [2:0] snd_dl_d;
 
 assign LED_USER  = ioctl_download | (vsd_sel & sd_act) | tape_led;
 wire   fdd_led;  // 1770 drive LED: lit while the drive motor runs, as on a real BBC drive
@@ -102,7 +111,10 @@ video_freak video_freak
 // L-M (21-22)- Tape sound: Low / Medium / Loud / Off
 // N (23)- Eject tape (trigger)
 // o0-o1 (32-33) - On-screen disk status: Off / On / On activity
+// o5-o6 (37-38) - Drive sounds: Off / Low / Medium / Loud (default Off)
+// o7 (39)       - Tape relay click: Off / On (default Off)
 // File index 1 - UEF tape image
+// File index 2 - sounds.rom (drive and relay samples from BeebEm), reloaded at every core start
 //
 // Mask index : 
 // 0 - MMFS Active
@@ -137,6 +149,10 @@ parameter CONF_STR = {
 	"TN,Eject Tape;",
 	"OK,Tape Input,File,ADC;",
 	"OLM,Tape Sound,Low,Medium,Loud,Off;",
+	"o7,Tape Relay Click,Off,On;",
+	"-;",
+	"FC2,ROM,Load Drive Sounds;",
+	"o56,Drive Sounds,Off,Low,Medium,Loud;",
 	"-;",
 	"O4,Model,B(MOS6502),Master(R65SC12);",
 	"O56,Co-Processor,None,MOS65C02;",
@@ -154,7 +170,7 @@ parameter CONF_STR = {
 	"-;",
 	"R0,Reset;",
 	"JA,Fire;",
-	"I,Compressed UEF could not be decompressed,No UEF header - playing as raw bitstream,UEF tape ready,Tape ejected;",
+	"I,Compressed UEF could not be decompressed,No UEF header - playing as raw bitstream,UEF tape ready,Tape ejected,Not a drive sounds file (sounds.rom);",
 	"V,PSMain-",`BUILD_DATE
 };
 
@@ -621,6 +637,9 @@ bbc_micro_core BBCMicro(
 	.tape_motor(tape_motor),
 	.floppy_led(fdd_led),
 	.floppy_info(fdd_info),
+	.floppy_step(fdd_step),
+	.floppy_seek(fdd_seek),
+	.floppy_seek_n(fdd_seek_n),
 	.tape_carrier(),
 
 	.test()
@@ -660,22 +679,30 @@ always @(posedge clk_sys) begin
 	tape_ej_d  <= status[23];
 	if (status[23] & ~tape_ej_d) tape_ej_msg <= 4'd15;
 	else if (tape_ej_msg != 4'd0) tape_ej_msg <= tape_ej_msg - 4'd1;
+	// sounds_loaded settles one clk after the download ends; check two clks later
+	snd_dl_d <= {snd_dl_d[1:0], snd_dl};
+	if (snd_dl_d[2] & ~snd_dl_d[1] & ~sounds_loaded) snd_msg <= 4'd15;
+	else if (snd_msg != 4'd0) snd_msg <= snd_msg - 4'd1;
 	if (tape_ej_msg != 4'd0)
 		tape_info <= 8'd4;          // tape ejected
+	else if (snd_msg != 4'd0)
+		tape_info <= 8'd5;          // sounds.rom not recognised
 	else case (tape_fmt)
 		2'd3: tape_info <= 8'd1;    // gzip that failed to decompress
 		2'd2: tape_info <= 8'd2;    // no UEF header
 		default: tape_info <= 8'd3; // UEF ready
 	endcase
 	// one clk after tape_info is valid; hps_io latches info on the rising edge
-	tape_info_req <= ((tape_fmt != 2'd0) && (tape_fmt_d != 2'd0) && (tape_ej_msg == 4'd0)) ||
-	                 ((tape_ej_msg != 4'd0) && (tape_ej_msg < 4'd12));
+	tape_info_req <= ((tape_fmt != 2'd0) && (tape_fmt_d != 2'd0) && (tape_ej_msg == 4'd0) && (snd_msg == 4'd0)) ||
+	                 ((tape_ej_msg != 4'd0) && (tape_ej_msg < 4'd12)) ||
+	                 ((snd_msg != 4'd0) && (snd_msg < 4'd12) && (tape_ej_msg == 4'd0));
 end
 
 // Tape image: "Load Tape" (file index 1) downloads a UEF into DDR3, and the
 // player streams it to the Serial ULA while the cassette motor is on.
 // gzip-compressed UEFs (most of them) are decompressed in DDR3 first.
 wire        tape_dl = ioctl_download && (ioctl_index[5:0] == 6'd1);
+assign      snd_dl  = ioctl_download && (ioctl_index[5:0] == 6'd2);
 wire        tape_rd, tape_rvalid, tape_inf_err;
 wire [24:0] tape_raddr, tape_size;
 wire  [7:0] tape_rdata;
@@ -690,6 +717,11 @@ tape_store tape_store
 	.dl_addr(ioctl_addr),
 	.dl_data(ioctl_dout),
 	.dl_wait(tape_wbusy),
+	.snd_active(snd_dl),
+	.s_rd(snd_rd),
+	.s_addr(snd_raddr),
+	.s_data(snd_rdata),
+	.s_valid(snd_rvalid),
 	.p_rd(tape_rd),
 	.p_addr(tape_raddr),
 	.p_data(tape_rdata),
@@ -743,6 +775,42 @@ end
 
 wire [7:0] audio_sn;
 
+// Drive sounds and cassette relay clicks (BeebEm's samples, from sounds.rom in DDR3).
+// The controller signals come from the gated clk_48 domain: register them here.
+reg  [1:0] ds_motor_s, ds_step_s, ds_seek_s, ds_relay_s;
+reg  [6:0] ds_seek_n;
+always @(posedge clk_sys) begin
+	ds_motor_s <= {ds_motor_s[0], fdd_led};
+	ds_step_s  <= {ds_step_s[0],  fdd_step};
+	ds_seek_s  <= {ds_seek_s[0],  fdd_seek};
+	ds_relay_s <= {ds_relay_s[0], tape_motor};
+	ds_seek_n  <= fdd_seek_n;   // settled long before the toggle reaches ds_seek_s[1]
+end
+
+wire signed [17:0] drive_snd;
+drive_sound #(.CLK_HZ(96000000)) drive_sound
+(
+	.clk(clk_sys),
+	.rst(RESET),
+	.level(status[38:37]),
+	.relay_en(status[39]),
+	.motor(ds_motor_s[1]),
+	.step(ds_step_s[1]),
+	.seek_tog(ds_seek_s[1]),
+	.seek_n(ds_seek_n),
+	.tape_motor(ds_relay_s[1]),
+	.dl_active(snd_dl),
+	.dl_wr(ioctl_wr),
+	.dl_addr(ioctl_addr[16:0]),
+	.dl_data(ioctl_dout),
+	.mem_rd(snd_rd),
+	.mem_addr(snd_raddr),
+	.mem_data(snd_rdata),
+	.mem_valid(snd_rvalid),
+	.loaded(sounds_loaded),
+	.audio(drive_snd)
+);
+
 // Tape sound: what the Serial ULA is hearing (and any tones it is saving),
 // mixed in at a modest level while the motor is on.
 reg  [1:0]  tape_snd_s;
@@ -752,10 +820,18 @@ wire signed [16:0] tape_amp = (status[22:21] == 2'd0) ? 17'sd1024 :     // Low
                               (status[22:21] == 2'd1) ? 17'sd2048 :     // Medium
                                                         17'sd6144;      // Loud
 wire signed [16:0] tape_snd = !tape_snd_on ? 17'sd0 : tape_snd_s[1] ? tape_amp : -tape_amp;
-wire signed [16:0] mix_l = $signed({core_audio_l[15], core_audio_l}) + tape_snd;
-wire signed [16:0] mix_r = $signed({core_audio_r[15], core_audio_r}) + tape_snd;
-assign AUDIO_L = (mix_l[16] != mix_l[15]) ? {mix_l[16], {15{~mix_l[16]}}} : mix_l[15:0];
-assign AUDIO_R = (mix_r[16] != mix_r[15]) ? {mix_r[16], {15{~mix_r[16]}}} : mix_r[15:0];
+wire signed [18:0] mix_l = $signed({{3{core_audio_l[15]}}, core_audio_l}) + tape_snd + drive_snd;
+wire signed [18:0] mix_r = $signed({{3{core_audio_r[15]}}, core_audio_r}) + tape_snd + drive_snd;
+wire               sat_l = (mix_l[18:15] != 4'b0000) && (mix_l[18:15] != 4'b1111);
+wire               sat_r = (mix_r[18:15] != 4'b0000) && (mix_r[18:15] != 4'b1111);
+// registered so the extra adder and saturation stay off the paths into sys/audio_out
+reg  [15:0] audio_l_r, audio_r_r;
+always @(posedge clk_sys) begin
+	audio_l_r <= sat_l ? {mix_l[18], {15{~mix_l[18]}}} : mix_l[15:0];
+	audio_r_r <= sat_r ? {mix_r[18], {15{~mix_r[18]}}} : mix_r[15:0];
+end
+assign AUDIO_L = audio_l_r;
+assign AUDIO_R = audio_r_r;
 
 assign AUDIO_MIX = 0;
 assign AUDIO_S = 1;

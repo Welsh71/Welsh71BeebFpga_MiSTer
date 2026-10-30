@@ -52,6 +52,7 @@ set_global_assignment -name VERILOG_FILE rtl/tape/tape_store.v
 set_global_assignment -name VERILOG_FILE rtl/fdc1772/fdc1772.v
 set_global_assignment -name VERILOG_FILE rtl/fdc1772/floppy.v
 set_global_assignment -name VERILOG_FILE rtl/i8271/i8271.v
+set_global_assignment -name VERILOG_FILE rtl/drive_sound.v
 set_global_assignment -name VERILOG_FILE rtl/rtc_chip.v
 set_global_assignment -name VERILOG_FILE rtl/disk_osd.v
 set_global_assignment -name VHDL_FILE rtl/bbc_micro_core.vhd -hdl_version VHDL_2008

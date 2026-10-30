@@ -9,6 +9,7 @@ This continues [sharpie7/BeebFpga_MiSTer](https://github.com/sharpie7/BeebFpga_M
 ## What's new in this version
 
 - **Intel 8271 disc controller with Acorn DFS 1.20 for the Model B**, as fitted to most early Beebs and used by BeebEm by default. It is now the Model B's default disc system, with the 1770 and DFS 2.26 still available from the menu. Software that drives the 8271 directly, and that won't run on a 1770, can now be used. See [Filing Systems](#filing-systems).
+- **Disc drive sounds** (optional, off by default): the motor hum, head load and unload, and head stepping and seeking of a real drive, using BeebEm's recordings. Works with both the 8271 and the 1770. There is also an optional cassette relay click. See [Drive Sounds](#drive-sounds).
 - **Current MiSTer framework** (October 2026 `sys`), so the core works with today's Main_MiSTer, scaler, HDMI and analogue output options.
 - **Cassette tape loading** from `.UEF` files (plain or gzip-compressed) via the OSD, with a real MC6850 ACIA and Serial ULA emulation and cassette demodulator. Includes rewind, eject, tape sound (Low / Medium / Loud / Off) and an option to take tape input from the I/O board's ADC instead of a file. See [Cassette Tape](#cassette-tape).
 - **Video timing accuracy fixes** ported from hoglet67's 2022 BeebFPGA work (6845, SAA5050, 6522, video ULA and clock slots), fixing split-screen games such as Elite and Revs.
@@ -131,6 +132,17 @@ Other options:
 - **Eject Tape** - unload the tape image.
 - **Tape Input: File / ADC** - use a loaded UEF, or a real cassette player connected to the I/O board's audio input.
 - **Tape Sound** - hear the tape while it loads, at Low, Medium or Loud volume, or Off.
+- **Tape Relay Click** - the click of the cassette motor relay switching on and off (needs `sounds.rom`, see below). Off by default.
+
+## Drive Sounds
+
+The core can play the sounds of a real disc drive while it works: the motor, the head loading and unloading, single steps and longer seeks. They are recordings from [BeebEm](https://github.com/stardot/beebem-windows), packed into one file, `sounds.rom`. The sounds are only heard; disc timing is exactly the same with them on or off.
+
+1. Download [`sounds.rom`](releases/sounds.rom) from the `releases/` folder and copy it to `games/BBCMicro` on the MiSTer SD card.
+2. In the OSD choose **Load Drive Sounds** and pick `sounds.rom`. You only need to do this once: MiSTer reloads it every time the core starts.
+3. Set **Drive Sounds** to Low, Medium or Loud (it is Off by default). Use the MiSTer menu's *Save Settings* to keep your choice.
+
+If a different file is picked by mistake, the menu says it is not a drive sounds file and the sounds stay off. `scripts/make_sounds_rom.py` rebuilds `sounds.rom` from a BeebEm installation. The samples are from BeebEm, © the BeebEm authors, used under the GNU GPL v2.
 
 ## Hardware
 
