@@ -155,37 +155,47 @@ module drive_sound #(
     // ------------------------------------------------------------ mixer
     reg  [11:0] tick;
     reg   [2:0] v;              // voice being read
-    reg         busy, wait_d;
-    reg  signed [17:0] acc;
+    reg         busy, wait_d, fin;
+    reg  signed [17:0] acc;     // drive voices (2-6)
+    reg  signed [17:0] acc_r;   // relay clicks (0-1)
 
     wire signed [8:0] s = $signed({1'b0, mem_data}) - 9'sd128;
     // drive voices follow the level setting; relay clicks are fixed at medium
     wire  [2:0] sh = (v < 3'd2) ? 3'd6 : (level == 2'd1) ? 3'd5 : (level == 2'd2) ? 3'd6 : 3'd7;
     wire signed [17:0] s_scaled = $signed({{9{s[8]}}, s}) << sh;   // << rather than <<<: same result, no tool quirks
+    // Drive voices get a further x1.625 (+4.2 dB) once summed: acc + acc/2 + acc/8.
+    // The low 5 bits of acc are always zero (sh >= 5), so the divisions are exact.
+    // Done in its own cycle (fin) from registers, off the memory-read path.
+    wire signed [17:0] acc_boost = acc + {acc[17], acc[17:1]} + {{3{acc[17]}}, acc[17:3]};
 
     integer i;
     always @(posedge clk) begin
         mem_rd <= 1'b0;
         if (rst) begin
             tick <= 12'd0; busy <= 1'b0; wait_d <= 1'b0; on <= 7'd0; loop <= 7'd0;
-            audio <= 18'sd0; acc <= 18'sd0; v <= 3'd0;
+            audio <= 18'sd0; acc <= 18'sd0; acc_r <= 18'sd0; v <= 3'd0; fin <= 1'b0;
         end else begin
             tick <= (tick == TICK - 1) ? 12'd0 : tick + 12'd1;
 
             if (!busy) begin
                 if (tick == 12'd0) begin
-                    busy <= 1'b1; v <= 3'd0; acc <= 18'sd0; wait_d <= 1'b0;
+                    busy <= 1'b1; v <= 3'd0; acc <= 18'sd0; acc_r <= 18'sd0; wait_d <= 1'b0;
                 end
+            end else if (fin) begin
+                fin   <= 1'b0;
+                busy  <= 1'b0;
+                audio <= acc_r + acc_boost;
             end else if (wait_d) begin
                 if (mem_valid) begin
                     wait_d <= 1'b0;
-                    acc    <= acc + s_scaled;
+                    if (v < 3'd2) acc_r <= acc_r + s_scaled;
+                    else          acc   <= acc + s_scaled;
                     if (pos[v] + 17'd1 >= len[v]) begin
                         pos[v] <= 17'd0;
                         if (!loop[v]) on[v] <= 1'b0;
                     end else
                         pos[v] <= pos[v] + 17'd1;
-                    if (v == 3'd6) begin busy <= 1'b0; audio <= acc + s_scaled; end
+                    if (v == 3'd6) fin <= 1'b1;
                     else v <= v + 3'd1;
                 end
             end else if (on[v] && len[v] != 17'd0) begin
@@ -193,7 +203,7 @@ module drive_sound #(
                 mem_addr <= off[v] + pos[v];
                 wait_d   <= 1'b1;
             end else begin
-                if (v == 3'd6) begin busy <= 1'b0; audio <= acc; end
+                if (v == 3'd6) fin <= 1'b1;
                 else v <= v + 3'd1;
             end
 

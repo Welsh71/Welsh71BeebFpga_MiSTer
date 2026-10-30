@@ -143,6 +143,7 @@ module tb;
                 next_mix(v);
                 ea = (a < 0) ? 0 : smp(a, loop_a ? (i % slen(a)) : i);
                 e  = (ea + ((b < 0 || i >= slen(b)) ? 0 : smp(b, i))) * (1 << sh);
+                if (a >= 2 || b >= 2) e = e * 13 / 8;   // drive voices: x1.625 (+4.2 dB)
                 if (v !== e) begin
                     if (bad < 5) $display("  %0s: sample %0d got %0d expected %0d", name, i, v, e);
                     bad = bad + 1;
